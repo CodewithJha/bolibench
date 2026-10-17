@@ -1,0 +1,462 @@
+"""Public demo server: bundled run artifacts, the suite, a bounded scripted evaluator, and an optional
+token-gated live mode. Stdlib only.
+
+GET responses are built once at startup from files and served from memory by exact path, so no
+request ever touches the filesystem. POST /api/evaluate replays a user-supplied FakeAgentAdapter
+script against a fresh in-memory sandbox: no network, no file writes. Requests never choose an agent
+URL. Live mode (POST /api/live-run) runs one suite case through the webhook adapter against the agent
+hosted next to this server, at a URL fixed at startup.
+"""
+
+import hmac
+import html
+import json
+import os
+import re
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, TypeVar
+
+from pydantic import Field, ValidationError
+
+from bolibench.adapters import FakeAgentAdapter, Step
+from bolibench.evaluate import evaluate
+from bolibench.models import AdapterInfo, Artifact, Model, Summary, TestCase
+from bolibench.runner import run_case
+from bolibench.store import load_suite
+from bolibench.webhook import WebhookAgentAdapter, check_agent_url
+
+MAX_BODY = 32 * 1024
+MAX_STEPS = 64  # across all turns of one script
+MAX_CONCURRENT = 4
+RATE_BURST = 10.0
+RATE_PER_S = 1 / 6  # sustained 10 evaluations per minute per client
+READ_TIMEOUT_S = 10.0  # per socket read; evaluation itself is bounded by MAX_BODY and MAX_STEPS
+JSON = "application/json; charset=utf-8"
+ABS_PATH = re.compile(r"^(/|~/|[A-Za-z]:[\\/])")
+CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'"
+LIVE_DISABLED = "live mode is disabled on this deployment: no hosted agent or no demo token is configured"
+REFUSE_AGENT_URL = (
+    "agent_url is refused: requests never choose the agent; live runs use the agent hosted with this server, "
+    "and your own agent runs locally via `bolibench run --agent-url`"
+)
+M = TypeVar("M", bound=Model)
+
+
+@dataclass(frozen=True)
+class Live:
+    """Live-mode settings, fixed at startup. The agent URL never comes from a request."""
+
+    token: str = field(repr=False)
+    agent_url: str
+    turn_timeout: float = 40.0  # per turn; cases have at most 2 turns, so a run stays under ~100s proxy limits
+    daily_cap: int = 50
+    keep: int = 20  # live results kept in memory for GET /api/live-runs
+
+    def __post_init__(self) -> None:
+        if len(self.token) < 16:
+            raise ValueError("BOLIBENCH_DEMO_TOKEN must be at least 16 characters")
+        check_agent_url(self.agent_url)
+
+
+class BundledRun(Model):
+    label: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$")  # also the directory name under demo/runs/
+    source: str
+    date: str
+    model: str
+    agent: str
+    note: str
+
+
+class RunIndex(Model):
+    runs: list[BundledRun]
+
+
+class EvaluateRequest(Model):
+    case_id: str
+    script: list[list[Step]]
+
+
+class LiveRunRequest(Model):
+    case_id: str
+
+
+def scrub(value: Any) -> Any:
+    """Replace whole-string absolute paths (e.g. a scripted run's config.script) with their file name."""
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    if isinstance(value, str) and ABS_PATH.match(value):
+        return re.split(r"[\\/]", value)[-1]
+    return value
+
+
+def dumps(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, indent=2).encode()
+
+
+@dataclass(frozen=True)
+class Demo:
+    cases: dict[str, TestCase]
+    runs: int
+    pages: dict[str, tuple[str, bytes]]  # exact request path -> (content type, body)
+
+
+def load_demo(suite_dir: Path, demo_dir: Path) -> Demo:
+    """Load and validate everything up front; any inconsistency stops startup instead of being served."""
+    cases = {c.id: c for c in load_suite(suite_dir)}
+    index = RunIndex.model_validate_json((demo_dir / "runs" / "index.json").read_bytes())
+    pages: dict[str, tuple[str, bytes]] = {}
+    runs: list[dict[str, Any]] = []
+    verdicts: dict[str, dict[str, tuple[str, list[str]]]] = {}
+    for entry in index.runs:
+        run_dir = demo_dir / "runs" / entry.label
+        summary = Summary.model_validate_json((run_dir / "summary.json").read_bytes())
+        paths = [p for p in sorted(run_dir.glob("*.json")) if p.name != "summary.json"]
+        if {p.stem for p in paths} != set(summary.cases):
+            raise ValueError(f"{run_dir}: artifact files do not match summary.json cases")
+        cells: dict[str, tuple[str, list[str]]] = {}
+        for p in paths:
+            raw = p.read_bytes()
+            artifact = Artifact.model_validate_json(raw)
+            pages[f"/api/runs/{entry.label}/{p.stem}"] = (JSON, dumps(scrub(json.loads(raw))))
+            cells[p.stem] = (artifact.evaluation.verdict, [c.category for c in artifact.evaluation.classifications])
+        verdicts[entry.label] = cells
+        runs.append(
+            entry.model_dump()
+            | {
+                "config_id": summary.config_id,
+                "total": summary.total,
+                "counts": summary.counts,
+                "cases": summary.cases,
+                "adapters": [a.model_dump(mode="json") for a in summary.adapters],
+            }
+        )
+    pages["/api/cases"] = (JSON, dumps(scrub([c.model_dump(mode="json") for c in cases.values()])))
+    pages["/api/runs"] = (JSON, dumps(scrub(runs)))
+    example = (demo_dir / "example-request.json").read_text(encoding="utf-8")
+    pages["/"] = ("text/html; charset=utf-8", render_index(cases, index.runs, verdicts, example).encode())
+    return Demo(cases, len(runs), pages)
+
+
+def render_index(
+    cases: dict[str, TestCase], runs: list[BundledRun], verdicts: dict[str, dict[str, tuple[str, list[str]]]], example: str
+) -> str:
+    e = html.escape
+    case_ids = sorted(set(cases) | {c for cells in verdicts.values() for c in cells})
+    head = "".join(f"<th>{e(r.label)}<br><small>{e(r.model)}<br>{e(r.note)}</small></th>" for r in runs)
+    rows = []
+    for cid in case_ids:
+        tags = ", ".join(cases[cid].tags) if cid in cases else "(not in current suite)"
+        cells = []
+        for r in runs:
+            if cid not in verdicts[r.label]:
+                cells.append("<td>-</td>")
+                continue
+            verdict, cats = verdicts[r.label][cid]
+            cells.append(
+                f'<td class="{e(verdict)}"><a href="/api/runs/{e(r.label)}/{e(cid)}">{e(verdict)}</a>'
+                f"<br><small>{e(', '.join(cats))}</small></td>"
+            )
+        rows.append(f"<tr><td><code>{e(cid)}</code><br><small>{e(tags)}</small></td>{''.join(cells)}</tr>")
+    options = "".join(f'<option{" selected" if c == "ambiguous-previous-order" else ""}>{e(c)}</option>' for c in cases)
+    script = json.dumps(json.loads(example)["script"], ensure_ascii=False, indent=1)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BoliBench demo</title>
+<style>
+body{{font:15px/1.45 system-ui,sans-serif;max-width:72rem;margin:2rem auto;padding:0 1rem;color:#1d1d1f}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:.4rem;vertical-align:top;text-align:left}}
+.pass{{background:#e6f4ea}}.fail{{background:#fdecea}}.error,.inconclusive{{background:#fff4e5}}
+textarea{{width:100%;font:13px ui-monospace,monospace}}pre{{background:#f5f5f7;padding:1rem;overflow:auto;max-height:40rem}}
+</style></head><body>
+<h1>BoliBench</h1>
+<p>Hindi-English and Awadhi order-management cases. Agents are judged on the tool calls a sandbox observed and the
+final sandbox state, not on what they say. Below: bundled real runs (each a single unseeded run, so per-case
+differences may be sampling noise), then a live evaluator for scripted test harnesses.
+JSON: <a href="/api/cases">/api/cases</a> · <a href="/api/runs">/api/runs</a> · <a href="/health">/health</a></p>
+<h2>Bundled runs</h2>
+<table><tr><th>case</th>{head}</tr>{''.join(rows)}</table>
+<p><small>Verdicts and failure classifications are from each run's artifact, judged when the run was made.
+Click a verdict for the full artifact (turns, tool calls, final state, checks).</small></p>
+<h2>Evaluate a script</h2>
+<p>A script is one list of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>,
+<code>{{"text": ...}}</code> (reply) or <code>{{"reason": ...}}</code> (adapter failure). It replays against a fresh
+sandbox and the real evaluator. No network calls; a request can never name an agent URL.
+Limits: {MAX_BODY // 1024} KiB body, {MAX_STEPS} steps, {RATE_BURST:.0f} requests burst per client.</p>
+<form id="f"><p><label>case <select name="case_id">{options}</select></label></p>
+<textarea name="script" rows="16">{e(script)}</textarea>
+<p><button>Evaluate</button></p></form>
+<pre id="out">(result appears here)</pre>
+<h2>Live: a hosted open-weight model agent</h2>
+<p>On a configured deployment an example agent backed by an open-weight model runs in this container, and
+BoliBench drives one suite case through it over the webhook adapter, recording every tool call in its own
+sandbox. Runs need the demo owner's token and are capped per day; every run, pass or not, is listed below.</p>
+<p id="live-status">checking live mode...</p>
+<form id="lf" hidden><label>case <select name="case_id">{options}</select></label>
+<label>token <input name="token" type="password" autocomplete="off"></label> <button>Run live</button></form>
+<pre id="lout" hidden></pre>
+<table id="lruns" hidden><tr><th>finished (UTC)</th><th>case</th><th>verdict</th><th>agent (self-reported)</th><th>classifications</th></tr></table>
+<script>
+const $ = (id) => document.getElementById(id);
+$("f").onsubmit = async (ev) => {{
+  ev.preventDefault();
+  const f = ev.target, out = $("out");
+  let script;
+  try {{ script = JSON.parse(f.script.value); }} catch (err) {{ out.textContent = "script is not valid JSON: " + err.message; return; }}
+  const r = await fetch("/api/evaluate", {{method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{case_id: f.case_id.value, script}})}});
+  out.textContent = r.status + "\\n" + JSON.stringify(await r.json(), null, 2);
+}};
+async function loadLive() {{
+  const d = await (await fetch("/api/live-runs")).json();
+  if (!d.enabled) {{ $("live-status").textContent = d.reason; return; }}
+  $("live-status").textContent = `Enabled: ${{d.runs_today}} of ${{d.daily_cap}} live runs used today (UTC), one at a time.`;
+  $("lf").hidden = false;
+  $("lruns").hidden = d.runs.length === 0;
+  $("lruns").querySelectorAll("tr.r").forEach((tr) => tr.remove());
+  for (const r of d.runs) {{
+    const tr = $("lruns").insertRow();
+    tr.className = "r " + r.verdict;
+    const agent = r.agent ? r.agent.name + " " + r.agent.version : "(none reported)";
+    for (const v of [r.finished_at, r.case_id, r.verdict, agent, r.artifact.evaluation.classifications.map((c) => c.category).join(", ")])
+      tr.insertCell().textContent = v;
+  }}
+}}
+$("lf").onsubmit = async (ev) => {{
+  ev.preventDefault();
+  const f = ev.target, out = $("lout");
+  out.hidden = false;
+  out.textContent = "running " + f.case_id.value + " ...";
+  const r = await fetch("/api/live-run", {{method: "POST", headers: {{"Content-Type": "application/json", "Authorization": "Bearer " + f.token.value}},
+    body: JSON.stringify({{case_id: f.case_id.value}})}});
+  out.textContent = r.status + "\\n" + JSON.stringify(await r.json(), null, 2);
+  loadLive();
+}};
+loadLive();
+</script>
+</body></html>
+"""
+
+
+class RateLimiter:
+    """In-memory token bucket per client key."""
+
+    # ponytail: per-process state; with several instances or restarts each has its own buckets.
+    # Use a shared store (or the platform's edge rate limiting) if this ever runs on more than one instance.
+    def __init__(self, burst: float = RATE_BURST, per_second: float = RATE_PER_S, max_keys: int = 10_000) -> None:
+        self.burst, self.per_second, self.max_keys = burst, per_second, max_keys
+        self._buckets: dict[str, tuple[float, float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            if len(self._buckets) >= self.max_keys:
+                self._buckets.clear()  # ponytail: bounds memory; a flood of new keys resets everyone's bucket
+            tokens, last = self._buckets.get(key, (self.burst, now))
+            tokens = min(self.burst, tokens + (now - last) * self.per_second)
+            allowed = tokens >= 1
+            self._buckets[key] = (tokens - 1 if allowed else tokens, now)
+            return allowed
+
+
+class DemoServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        demo: Demo,
+        limiter: RateLimiter | None = None,
+        max_concurrent: int = MAX_CONCURRENT,
+        client_ip_header: str | None = None,
+        live: Live | None = None,
+    ) -> None:
+        super().__init__(address, Handler)
+        self.demo = demo
+        self.limiter = limiter or RateLimiter()
+        self.slots = threading.BoundedSemaphore(max_concurrent)
+        self.client_ip_header = client_ip_header
+        self.live = live
+        self.live_lock = threading.Lock()  # one live run at a time; also guards the two fields below
+        # replaced, never mutated, so readers need no lock
+        # ponytail: in memory; a restart resets the daily count and forgets the results
+        self.live_day: tuple[str, int] = ("", 0)  # (UTC date, live runs started that day)
+        self.live_results: tuple[dict[str, Any], ...] = ()  # newest first
+
+    def runs_today(self) -> int:
+        day, count = self.live_day
+        return count if day == datetime.now(timezone.utc).date().isoformat() else 0
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: DemoServer
+    timeout = READ_TIMEOUT_S
+
+    def version_string(self) -> str:
+        return "bolibench-demo"
+
+    def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+        self._json(code, {"error": message or HTTPStatus(code).phrase})
+
+    def _send(self, status: int, content_type: str, body: bytes, headers: dict[str, str] | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if content_type.startswith("text/html"):
+            self.send_header("Content-Security-Policy", CSP)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, status: int, value: Any, headers: dict[str, str] | None = None) -> None:
+        self._send(status, JSON, dumps(value), headers)
+
+    def do_GET(self) -> None:
+        route = self.path.split("?", 1)[0]
+        s = self.server
+        if route == "/health":
+            self._json(200, {"status": "ok", "cases": len(s.demo.cases), "runs": s.demo.runs, "live": s.live is not None})
+        elif route == "/api/live-runs":
+            if s.live is None:
+                self._json(200, {"enabled": False, "reason": LIVE_DISABLED, "runs": []})
+            else:
+                status = {"enabled": True, "daily_cap": s.live.daily_cap, "runs_today": s.runs_today(), "turn_timeout_s": s.live.turn_timeout}
+                self._json(200, status | {"runs": list(s.live_results)})
+        elif (page := s.demo.pages.get(route)) is not None:
+            self._send(200, *page)
+        else:
+            self._json(404, {"error": "not found"})
+
+    do_HEAD = do_GET
+
+    def do_POST(self) -> None:
+        route = self.path.split("?", 1)[0]
+        if route == "/api/live-run" and self.server.live is None:
+            self._json(404, {"error": LIVE_DISABLED})
+            return
+        if route not in ("/api/evaluate", "/api/live-run"):
+            self._json(404, {"error": "not found"})
+            return
+        client = self.headers.get(self.server.client_ip_header or "") or self.client_address[0]
+        if not self.server.limiter.allow(client.strip()):
+            self._json(429, {"error": "rate limit exceeded"}, {"Retry-After": str(round(1 / self.server.limiter.per_second))})
+            return
+        if route == "/api/live-run" and not self._authorized():
+            self._json(401, {"error": "a valid Authorization: Bearer <demo token> header is required"}, {"WWW-Authenticate": "Bearer"})
+            return
+        length = self.headers.get("Content-Length", "")
+        if "Transfer-Encoding" in self.headers or not length.isdigit():
+            self._json(400, {"error": "a Content-Length body is required"})
+            return
+        if int(length) > MAX_BODY:
+            self._json(413, {"error": f"body exceeds {MAX_BODY} bytes"})
+            return
+        body = self.rfile.read(int(length))
+        if route == "/api/live-run":
+            self._live_run(body)
+            return
+        if not self.server.slots.acquire(blocking=False):
+            self._json(503, {"error": "busy, retry shortly"}, {"Retry-After": "1"})
+            return
+        try:
+            self._evaluate(body)
+        finally:
+            self.server.slots.release()
+
+    def _authorized(self) -> bool:
+        assert self.server.live is not None
+        expected = f"Bearer {self.server.live.token}".encode()
+        return hmac.compare_digest(self.headers.get("Authorization", "").encode(), expected)
+
+    def _parse(self, model: type[M], body: bytes) -> M | None:
+        """The validated request, or None after sending the 400."""
+        try:
+            return model.model_validate_json(body)
+        except ValidationError as e:
+            errors = e.errors(include_url=False, include_input=False, include_context=False)
+            if any(err["loc"][:1] == ("agent_url",) for err in errors):
+                self._json(400, {"error": REFUSE_AGENT_URL})
+            else:
+                self._json(400, {"error": "invalid request", "details": [{"loc": err["loc"], "msg": err["msg"]} for err in errors]})
+            return None
+
+    def _case(self, case_id: str) -> TestCase | None:
+        case = self.server.demo.cases.get(case_id)
+        if case is None:
+            self._json(404, {"error": f"unknown case_id: {case_id}"})
+        return case
+
+    def _evaluate(self, body: bytes) -> None:
+        if (req := self._parse(EvaluateRequest, body)) is None or (case := self._case(req.case_id)) is None:
+            return
+        if len(req.script) != len(case.turns):
+            self._json(400, {"error": f"script has {len(req.script)} turns but case {case.id} has {len(case.turns)}"})
+            return
+        if sum(map(len, req.script)) > MAX_STEPS:
+            self._json(400, {"error": f"script has more than {MAX_STEPS} steps"})
+            return
+        info = AdapterInfo(name="fake-scripted", version="1", config={"source": "POST /api/evaluate"})
+        record = run_case(case, FakeAgentAdapter(req.script, info=info))
+        artifact = Artifact(case_id=case.id, run=record, evaluation=evaluate(case, record))
+        self._send(200, JSON, artifact.model_dump_json(indent=2).encode())
+
+    def _live_run(self, body: bytes) -> None:
+        if (req := self._parse(LiveRunRequest, body)) is None or (case := self._case(req.case_id)) is None:
+            return
+        s, live = self.server, self.server.live
+        assert live is not None
+        if not s.live_lock.acquire(blocking=False):
+            self._json(503, {"error": "a live run is in progress, retry shortly"}, {"Retry-After": "30"})
+            return
+        try:
+            today, count = datetime.now(timezone.utc).date().isoformat(), s.runs_today()
+            if count >= live.daily_cap:
+                self._json(429, {"error": f"daily live-run cap of {live.daily_cap} reached; resets at 00:00 UTC"})
+                return
+            s.live_day = (today, count + 1)  # counted before running: errored runs used the agent too
+            with WebhookAgentAdapter(live.agent_url, live.turn_timeout) as adapter:
+                record = run_case(case, adapter)
+            artifact = Artifact(case_id=case.id, run=record, evaluation=evaluate(case, record))
+            agent = record.adapter.self_reported_agent
+            entry = {
+                "finished_at": f"{record.finished_at:%Y-%m-%dT%H:%M:%SZ}",
+                "case_id": case.id,
+                "verdict": artifact.evaluation.verdict,
+                "agent": agent.model_dump() if agent else None,
+                "artifact": artifact.model_dump(mode="json"),
+            }
+            s.live_results = (entry, *s.live_results)[: live.keep]
+        finally:
+            s.live_lock.release()
+        self._json(200, entry)
+
+
+def main() -> None:
+    env = os.environ
+    host = env.get("HOST") or ("0.0.0.0" if "PORT" in env else "127.0.0.1")
+    port = int(env.get("PORT", "8080"))
+    demo = load_demo(Path(env.get("BOLIBENCH_SUITE", "suites/orders")), Path(env.get("BOLIBENCH_DEMO", "demo")))
+    token, agent_url = env.get("BOLIBENCH_DEMO_TOKEN"), env.get("BOLIBENCH_LIVE_AGENT_URL")
+    live = None
+    if token and agent_url:
+        timeout, cap = float(env.get("BOLIBENCH_LIVE_TURN_TIMEOUT", "40")), int(env.get("BOLIBENCH_LIVE_DAILY_CAP", "50"))
+        live = Live(token, agent_url, timeout, cap)
+    server = DemoServer((host, port), demo, client_ip_header=env.get("BOLIBENCH_CLIENT_IP_HEADER"), live=live)
+    print(f"bolibench demo on http://{host}:{server.server_port} ({len(demo.cases)} cases)", flush=True)
+    print(f"live mode: on, agent {live.agent_url}, daily cap {live.daily_cap}" if live else f"live mode: off ({LIVE_DISABLED})", flush=True)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

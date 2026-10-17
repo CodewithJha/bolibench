@@ -1,0 +1,31 @@
+{
+  "case_id": "ambiguous-previous-order",
+  "script": [
+    [
+      {
+        "tool": "list_orders"
+      },
+      {
+        "tool": "ask_user",
+        "args": {
+          "kind": "confirm",
+          "question": "Kurta वाला पुराना order cancel कर दूँ?"
+        }
+      },
+      {
+        "text": "पिछला वाला Kurta order cancel कर दूँ?"
+      }
+    ],
+    [
+      {
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "ORD-101"
+        }
+      },
+      {
+        "text": "ठीक है, Kurta वाला order cancel हो गया।"
+      }
+    ]
+  ]
+}
