@@ -24,6 +24,10 @@ webhook: --agent-url must be http on 127.0.0.1/localhost/[::1]; see README "Webh
 --timeout bounds the whole turn (request, tool calls, reply); past it the turn's token is revoked
 and the case is an error. No retries.
 
+speech: --speech elevenlabs sends each utterance through ElevenLabs TTS -> STT and gives the agent the
+transcript (synthetic audio, not real speakers); needs ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID.
+--speech-audio-dir DIR caches the audio so reruns hear identical audio. See docs/integrations/elevenlabs.md.
+
 artifacts: <output>/<UTC timestamp>-<random>/<case_id>.json plus summary.json, never overwritten.
 
 exit codes: 0 every case passed; 1 any case failed, errored or was inconclusive;
@@ -76,19 +80,23 @@ def execute(cases: list[TestCase], adapter_for: Callable[[TestCase], AgentAdapte
     return 0 if verdicts["pass"] == len(cases) else 1
 
 
-def run_scripted(cases: list[TestCase], scripts: dict[str, tuple[Path, list[list[Step]]]], output: Path) -> int:
-    def scripted(case: TestCase) -> AgentAdapter:
-        path, script = scripts[case.id]
-        return FakeAgentAdapter(script, info=AdapterInfo(name="fake-scripted", version="1", config={"script": str(path)}))
+def scripted_adapter(path: Path, script: list[list[Step]]) -> FakeAgentAdapter:
+    return FakeAgentAdapter(script, info=AdapterInfo(name="fake-scripted", version="1", config={"script": str(path)}))
 
+
+Wrap = Callable[[AgentAdapter], AgentAdapter]
+
+
+def run_scripted(cases: list[TestCase], scripts: dict[str, tuple[Path, list[list[Step]]]], output: Path, wrap: Wrap = lambda a: a) -> int:
     print("adapter: fake-scripted (replays a fixed script; a test harness, not an AI agent)")
-    return execute(cases, scripted, output)
+    return execute(cases, lambda case: wrap(scripted_adapter(*scripts[case.id])), output)
 
 
-def run_webhook(cases: list[TestCase], agent_url: str, timeout: float, output: Path) -> int:
+def run_webhook(cases: list[TestCase], agent_url: str, timeout: float, output: Path, wrap: Wrap = lambda a: a) -> int:
     with WebhookAgentAdapter(agent_url, timeout) as webhook:
         print(f"adapter: webhook -> {agent_url} (tool gateway {webhook.gateway_url})")
-        code = execute(cases, lambda _: webhook, output)
+        adapter = wrap(webhook)
+        code = execute(cases, lambda _: adapter, output)
         # ponytail: printed only; requests arriving after this line are not seen at all
         for s in webhook.stray_calls:
             print(f"warning: refused {s.status} outside any running case: {s.reason} (tool {s.tool}, token turn {s.token_turn})", file=sys.stderr)
@@ -102,12 +110,22 @@ def run(args: argparse.Namespace) -> int:
             scripts = load_scripts(args.scripts, cases)
         else:
             check_agent_url(args.agent_url)
-    except ValueError as e:  # SuiteError or a bad --agent-url
+        if args.speech_audio_dir is not None and args.speech is None:
+            raise ValueError("--speech-audio-dir needs --speech")
+        wrap: Wrap = lambda a: a
+        if args.speech is not None:
+            from bolibench.speech import SpeechAdapter, elevenlabs_from_env
+
+            tts, stt = elevenlabs_from_env()
+            wrap = lambda a: SpeechAdapter(a, tts, stt, audio_dir=args.speech_audio_dir)
+    except ValueError as e:  # SuiteError, a bad --agent-url or speech config
         print(f"error: {e}", file=sys.stderr)
         return 2
+    if args.speech is not None:
+        print(f"speech: {args.speech} TTS -> STT, the agent hears the transcript (synthetic audio, not real speakers)")
     if args.agent_url is None:
-        return run_scripted(cases, scripts, args.output)
-    return run_webhook(cases, args.agent_url, args.timeout, args.output)
+        return run_scripted(cases, scripts, args.output, wrap)
+    return run_webhook(cases, args.agent_url, args.timeout, args.output, wrap)
 
 
 PLAIN = {
@@ -172,9 +190,28 @@ def main(argv: list[str] | None = None) -> int:
     adapter.add_argument("--agent-url", help="webhook adapter: local agent endpoint, e.g. http://127.0.0.1:8000/turn")
     run_cmd.add_argument("--timeout", type=float, default=30.0, help="webhook: whole-turn deadline in seconds (default 30)")
     run_cmd.add_argument("--output", type=Path, default=Path("runs"), help="artifact root (default: runs/)")
-    args = parser.parse_args(argv)
+    run_cmd.add_argument("--speech", choices=["elevenlabs"], help="speech round-trip: TTS -> STT before the agent (needs ELEVENLABS_* env)")
+    run_cmd.add_argument("--speech-audio-dir", type=Path, help="with --speech: save and reuse each turn's audio here")
+    # every other export argument goes to the exporter untouched; `export --to mongo --help` lists them
+    export = commands.add_parser("export", help="export run directories to MongoDB or Tiger Data (optional extras)", add_help=False)
+    export.add_argument("--to", choices=["mongo", "tiger"], required=True)
+    commands.add_parser("serve", help="serve the public demo (python -m bolibench.server; env in docs/deployment.md)")
+    args, rest = parser.parse_known_args(argv)
+    if args.command == "export":
+        if args.to == "mongo":
+            from bolibench.export_mongo import main as exporter
+        else:
+            from bolibench.export_tiger import main as exporter
+        return exporter(rest)
+    if rest:
+        parser.error(f"unrecognized arguments: {' '.join(rest)}")
     if args.command == "run":
         return run(args)
+    if args.command == "serve":
+        from bolibench.server import main as serve
+
+        serve()
+        return 0
 
     try:
         cases = load_suite(args.suite_dir)

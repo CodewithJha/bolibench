@@ -4,11 +4,11 @@ from typing import Any
 
 import pytest
 
-from bolibench import cli
+from bolibench import cli, speech
 from bolibench.adapters import Fail, FakeAgentAdapter
 from bolibench.cli import main
 from bolibench.evaluate import evaluate
-from bolibench.models import Artifact, Evaluation, Summary
+from bolibench.models import AdapterInfo, Artifact, Evaluation, Summary, Transcript
 from bolibench.runner import write_artifact
 from bolibench.store import SuiteError, load_case
 
@@ -161,11 +161,78 @@ def test_summary_keeps_error_and_inconclusive_apart(tmp_path: Path) -> None:
     assert again == 0 and first.config_id == second.config_id
 
 
+def test_scripted_config_id_covers_adapter_name_and_version(tmp_path: Path) -> None:
+    case = load_case(CASE)
+    good = cli.SCRIPT.validate_json(EXAMPLE.read_bytes())
+
+    def config_id(out: str, name: str, version: str) -> str:
+        cli.execute([case], lambda _: FakeAgentAdapter(good, info=AdapterInfo(name=name, version=version)), tmp_path / out)
+        return Summary.model_validate_json(next((tmp_path / out).iterdir()).joinpath("summary.json").read_text()).config_id
+
+    base = config_id("a", "fake-scripted", "1")
+    assert base == config_id("b", "fake-scripted", "1")
+    assert len({base, config_id("c", "fake-scripted", "2"), config_id("d", "other", "1")}) == 3
+
+
 def test_case_id_summary_is_reserved(tmp_path: Path) -> None:
     data = json.loads(CASE.read_text(encoding="utf-8")) | {"id": "summary"}
     (tmp_path / "summary.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(SuiteError, match="reserved"):
         load_case(tmp_path / "summary.json")
+
+
+class EchoTTS:
+    config = {"provider": "fake"}
+    suffix = ".bin"
+
+    def synthesize(self, text: str) -> bytes:
+        return text.encode()
+
+
+class EchoSTT:
+    config = {"provider": "fake"}
+
+    def transcribe(self, audio: bytes) -> Transcript:
+        return Transcript(text=audio.decode() + " (heard)", language="hin")
+
+
+def test_speech_flag_fills_asr_text_without_leaking_the_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    key = "sk_test_SECRET_cli_9f8e7d"
+    monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+    monkeypatch.setattr(speech, "elevenlabs_from_env", lambda: (EchoTTS(), EchoSTT()))
+    args = ["run", str(CASE), "--scripts", str(EXAMPLE), "--output", str(tmp_path / "out"), "--speech", "elevenlabs"]
+    assert main([*args, "--speech-audio-dir", str(tmp_path / "audio")]) == 0
+    assert "speech: elevenlabs" in capsys.readouterr().out
+    artifact = artifacts(tmp_path / "out")["ambiguous-previous-order"]
+    case = load_case(CASE)
+    assert [t.asr_text for t in artifact.run.turns] == [f"{u} (heard)" for u in case.turns]
+    assert [t.speech.transcript.text if t.speech else None for t in artifact.run.turns] == [f"{u} (heard)" for u in case.turns]
+    assert artifact.run.adapter.name == "speech+fake-scripted" and artifact.evaluation.verdict == "pass"
+    assert len(list((tmp_path / "audio").iterdir())) == len(case.turns)
+    [run_dir] = (tmp_path / "out").iterdir()
+    assert all(key not in p.read_text(encoding="utf-8") for p in run_dir.iterdir())
+
+
+@pytest.mark.parametrize(
+    "extra,message",
+    [(["--speech", "elevenlabs"], "ELEVENLABS_API_KEY is not set"), (["--speech-audio-dir", "audio"], "--speech-audio-dir needs --speech")],
+)
+def test_speech_config_errors_exit_2_before_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], extra: list[str], message: str
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    assert main(["run", str(CASE), "--scripts", str(EXAMPLE), "--output", str(tmp_path / "out"), *extra]) == 2
+    assert message in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_runs_without_speech_keep_asr_text_null_and_no_speech_key(tmp_path: Path) -> None:
+    assert main(["run", str(CASE), "--scripts", str(EXAMPLE), "--output", str(tmp_path)]) == 0
+    [run_dir] = tmp_path.iterdir()
+    raw = json.loads((run_dir / "ambiguous-previous-order.json").read_text(encoding="utf-8"))
+    turns = raw["run"]["turns"]
+    assert len(turns) == 2 and all(list(t) == ["user_input", "asr_text", "agent_reply"] and t["asr_text"] is None for t in turns)
 
 
 def test_programming_errors_propagate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
