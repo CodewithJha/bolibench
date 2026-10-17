@@ -1,0 +1,34 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# One container: the demo server plus, when the two secrets are set, a hosted example agent (live mode).
+services:
+  - type: web
+    name: bolibench-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free  # 0.1 CPU / 512 MB; spins down when idle, first request after that is slow
+    region: singapore  # closest Render region to India
+    branch: master
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # set by Cloudflare in front of Render; X-Forwarded-For keeps client-supplied entries
+      - key: BOLIBENCH_CLIENT_IP_HEADER
+        value: True-Client-IP
+      # live mode: an open-weight model on DigitalOcean serverless inference (OpenAI-compatible)
+      - key: AGENT_BASE_URL
+        value: https://inference.do-ai.run/v1
+      # open-weight Gemma 4; verify tool calling with the probe in docs/deployment.md first,
+      # and add AGENT_TOOL_MODE=json if the model returns no tool_calls
+      - key: AGENT_MODEL
+        value: gemma-4-31B-it
+      - key: AGENT_API_KEY_ENV  # the name of the variable holding the key, not the key
+        value: MODEL_ACCESS_KEY
+      - key: BOLIBENCH_LIVE_DAILY_CAP
+        value: "50"
+      # secrets: Render prompts for these; leaving either empty keeps live mode off
+      - key: MODEL_ACCESS_KEY
+        sync: false
+      - key: BOLIBENCH_DEMO_TOKEN  # at least 16 characters, e.g. `openssl rand -hex 24`
+        sync: false
+    # domains:
+    #   - bolibench.example.tech  # add only once the domain is registered; see docs/deployment.md
