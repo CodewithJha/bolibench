@@ -18,7 +18,9 @@ def run_case(case: TestCase, adapter: AgentAdapter) -> RunRecord:
     try:
         for i, utterance in enumerate(case.turns):
             reply = adapter.respond(i, utterance, case.context, sandbox)
-            turns.append(TurnRecord(user_input=utterance, agent_reply=reply))
+            # speech adapters expose the transcript the agent acted on; every other adapter records None
+            asr_text, speech = getattr(adapter, "asr_text", None), getattr(adapter, "last_turn", None)
+            turns.append(TurnRecord(user_input=utterance, asr_text=asr_text, agent_reply=reply, speech=speech))
     except AdapterError as e:
         error = f"AdapterError: {e}"
     refused = sandbox.close()
