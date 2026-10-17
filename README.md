@@ -258,7 +258,11 @@ Only run agents you trust.
 
 `examples/ollama_agent.py` is a stdlib-only example agent that answers each turn with a local
 Ollama model using Ollama's tool calling, and executes tools only through `tools_url`. It is not
-part of the package and is not tested by the suite.
+part of the package; only its offline turn-ending logic is tested. Since the baseline it is v2:
+`ask_user` ends the turn (later tool calls in that model message are dropped), the prompt says to
+look orders up instead of guessing ids and to retry a temporary failure once, and `context` is
+stated in full sentences. The baseline's v1 is the file at commit `424145d` (sha256 `4b68d382…`);
+a single v2 run is audited in `docs/audits/qwen3-8b-agent-v2-2026-10-17.md`.
 
 ```sh
 ollama serve                                         # model already pulled, e.g. qwen3:8b
