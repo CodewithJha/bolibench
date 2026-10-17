@@ -1,8 +1,10 @@
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from bolibench import speech
+from bolibench import cli, speech
 from bolibench.adapters import AdapterError, Call, FakeAgentAdapter, Reply
 from bolibench.evaluate import evaluate
 from bolibench.models import AdapterInfo, CaseContext
@@ -20,6 +22,7 @@ from bolibench.speech import ElevenLabsSTT, ElevenLabsTTS, SpeechAdapter, Transc
 from bolibench.store import load_case
 
 SUITE = Path(__file__).parent.parent / "suites" / "orders"
+SCRIPT = Path(__file__).parent.parent / "examples" / "scripts" / "ambiguous-previous-order.json"
 CASE = load_case(SUITE / "awadhi-cancel-yesterday.json")
 KEY = "sk_test_SECRET_9f8e7d"
 GOOD = [[Call(tool="list_orders"), Call(tool="cancel_order", args={"order_id": "ORD-401"}), Reply(text="हो गया")]]
@@ -118,6 +121,24 @@ def test_speech_failure_is_an_error_verdict_not_fail() -> None:
     assert evaluate(CASE, record).verdict == "error" and adapter.turns == [] and adapter.asr_text is None
 
 
+def test_failed_cache_write_leaves_no_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def disk_full(self: Path, target: Path) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        SpeechAdapter(FakeAgentAdapter(GOOD), FakeTTS(), FakeSTT(), audio_dir=tmp_path)._speak("hi")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_text_only_run_never_imports_speech(tmp_path: Path) -> None:
+    argv = ["run", str(SUITE / "ambiguous-previous-order.json"), "--scripts", str(SCRIPT), "--output", str(tmp_path)]
+    code = f"import sys; from bolibench.cli import main; assert main({argv!r}) == 0; assert 'bolibench.speech' not in sys.modules"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ELEVENLABS_")}
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 # --- ElevenLabs clients against an in-process stub -------------------------------------------------
 
 
@@ -127,6 +148,7 @@ class Stub:
     body: bytes = b""
     headers: dict[str, str] = field(default_factory=dict)
     delay: float = 0.0
+    reply: Callable[[str, bytes], bytes] | None = None  # (path, request body) -> response body, instead of `body`
     requests: list[tuple[str, dict[str, str], bytes]] = field(default_factory=list)
     url: str = ""
 
@@ -137,15 +159,16 @@ def stub() -> Iterator[Stub]:
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers["Content-Length"]))
-            state.requests.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
+            request = self.rfile.read(int(self.headers["Content-Length"]))
+            state.requests.append((self.path, {k.lower(): v for k, v in self.headers.items()}, request))
             time.sleep(state.delay)
+            body = state.body if state.reply is None else state.reply(self.path, request)
             self.send_response(state.status)
             for k, v in state.headers.items():
                 self.send_header(k, v)
-            self.send_header("Content-Length", str(len(state.body)))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(state.body)
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: Any) -> None:
             pass
@@ -211,6 +234,7 @@ def test_missing_config_fails_before_any_request(stub: Stub) -> None:
         {"api_key": ""},
         {"api_key": "has space"},
         {"voice_id": "../voices"},
+        {"voice_id": ".."},
         {"base_url": "http://api.elevenlabs.io"},  # cleartext key off-host
         {"timeout": 0},
         {"output_format": "pcm_16000"},
@@ -227,6 +251,7 @@ def test_bad_tts_config_is_rejected(kw: dict[str, Any]) -> None:
     [
         (401, b'{"detail": {"type": "authentication_error", "code": "invalid_api_key", "message": "Invalid API key"}}', "Invalid API key"),
         (429, b'{"detail": {"code": "rate_limit_exceeded", "message": "Too many requests"}}', "Too many requests"),
+        (422, b'{"detail": [{"loc": ["body", "text"], "msg": "Field required", "type": "missing"}]}', "Field required"),
         (500, b'{"detail": "internal error"}', "internal error"),
         (503, b"<html>\n  Service   Unavailable</html>", "<html> Service Unavailable</html>"),
         (302, b"", "no detail"),  # redirects are refused: they would carry the key elsewhere
@@ -272,6 +297,34 @@ def test_key_never_in_reprs_or_config(stub: Stub) -> None:
     adapter = SpeechAdapter(FakeAgentAdapter(GOOD), t, s)
     for text in (repr(t), repr(s), repr(adapter), str(t.config), str(s.config), adapter.info.model_dump_json()):
         assert KEY not in text
+
+
+def official_api(path: str, body: bytes) -> bytes:
+    """ElevenLabs as documented: TTS answers audio bytes, STT a JSON transcript. The stub's "mp3" carries the text."""
+    if path.startswith("/v1/text-to-speech/"):
+        return b"ID3" + json.loads(body)["text"].encode()
+    audio = body.split(b"Content-Type: audio/mpeg\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
+    return json.dumps({"language_code": "hin", "language_probability": 0.97, "text": audio[3:].decode(), "words": []}).encode()
+
+
+def test_cli_speech_run_end_to_end_against_the_documented_api(stub: Stub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stub.reply = official_api
+    for name, value in {"ELEVENLABS_API_KEY": KEY, "ELEVENLABS_VOICE_ID": "VoiceABC123", "ELEVENLABS_BASE_URL": stub.url}.items():
+        monkeypatch.setenv(name, value)
+    case = load_case(SUITE / "ambiguous-previous-order.json")
+    argv = ["run", str(SUITE / "ambiguous-previous-order.json"), "--scripts", str(SCRIPT), "--speech", "elevenlabs", "--speech-audio-dir", str(tmp_path / "audio")]
+    for run in ("first", "rerun"):
+        assert cli.main([*argv, "--output", str(tmp_path / run)]) == 0
+    tts_path = "/v1/text-to-speech/VoiceABC123?output_format=mp3_44100_128"
+    assert [p for p, _, _ in stub.requests] == [tts_path, "/v1/speech-to-text"] * len(case.turns) + ["/v1/speech-to-text"] * len(case.turns)
+    assert all(h["xi-api-key"] == KEY for _, h, _ in stub.requests)
+    for run, cached in (("first", False), ("rerun", True)):
+        [artifact] = (tmp_path / run).glob("*/ambiguous-previous-order.json")
+        raw = json.loads(artifact.read_text(encoding="utf-8"))
+        assert raw["evaluation"]["verdict"] == "pass" and [t["asr_text"] for t in raw["run"]["turns"]] == case.turns
+        assert [t["speech"]["tts_s"] is None for t in raw["run"]["turns"]] == [cached] * len(case.turns)
+        assert raw["run"]["adapter"]["config"]["speech"]["stt"] == {"provider": "elevenlabs", "model": "scribe_v2", "language": None}
+    assert all(KEY.encode() not in p.read_bytes() for p in tmp_path.rglob("*") if p.is_file())
 
 
 @pytest.mark.skipif(

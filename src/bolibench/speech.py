@@ -32,7 +32,7 @@ TTS_MODEL = "eleven_multilingual_v2"  # lists Hindi; the documented default of t
 STT_MODEL = "scribe_v2"
 MAX_AUDIO = 5 * 1024 * 1024  # a one-turn utterance is tens of KB of mp3
 MAX_JSON = 1024 * 1024
-ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}")  # no leading dot: ".." would be a path segment
 
 
 class TTS(Protocol):
@@ -114,8 +114,11 @@ class SpeechAdapter:
         elapsed = round(time.monotonic() - start, 3)
         if path is not None:
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_bytes(audio)
-            tmp.replace(path)  # a crash mid-write must not leave a truncated cache entry
+            try:
+                tmp.write_bytes(audio)
+                tmp.replace(path)  # a crash mid-write must not leave a truncated cache entry
+            finally:
+                tmp.unlink(missing_ok=True)
         return audio, elapsed, path
 
 
@@ -134,7 +137,9 @@ def _reason(body: bytes) -> str:
         detail = json.loads(body).get("detail")
     except (ValueError, AttributeError):  # not JSON, or not an object
         detail = None
-    if isinstance(detail, dict):
+    if isinstance(detail, list) and detail and isinstance(detail[0], dict):  # 422: [{"loc", "msg", "type"}, ...]
+        detail = detail[0].get("msg")
+    elif isinstance(detail, dict):
         detail = detail.get("message") or detail.get("code")
     text = detail if isinstance(detail, str) else body.decode("utf-8", "replace")
     return " ".join(text.split())[:200] or "no detail"
