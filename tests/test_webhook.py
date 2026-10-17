@@ -16,7 +16,7 @@ import pytest
 
 from bolibench.cli import main
 from bolibench.evaluate import evaluate
-from bolibench.models import AdapterInfo, CaseContext, Evaluation, Review, RunRecord, TestCase, Tool
+from bolibench.models import AdapterInfo, AgentIdentity, CaseContext, Evaluation, Review, RunRecord, TestCase, Tool
 from bolibench.runner import run_case
 from bolibench.sandbox import OrderSandbox
 from bolibench.store import load_case
@@ -442,6 +442,63 @@ def test_cli_runs_a_case_against_a_webhook_agent(tmp_path: Path, capsys: pytest.
     assert code == 0 and "pass         cancel-single-order" in capsys.readouterr().out
     assert main(["run", str(SUITE), "--agent-url", "http://example.com/", "--output", str(tmp_path)]) == 2
     assert len(list(tmp_path.iterdir())) == 1
+
+
+AGENT_ID = {"name": "test-agent", "version": "abc123+model"}
+
+
+def test_self_reported_identity_is_recorded_per_case_and_absence_is_ok() -> None:
+    replies = iter([{"reply": "x", "agent": AGENT_ID}, {"reply": "y"}])
+    cases = [load_case(SUITE / "cancel-single-order.json"), load_case(SUITE / "tool-failure-cancel.json")]
+    with fake_agent(lambda _: next(replies)) as (url, _), WebhookAgentAdapter(url, timeout=2.0) as adapter:
+        first, second = run_case(cases[0], adapter), run_case(cases[1], adapter)
+    assert first.execution_error is None and first.adapter.self_reported_agent == AgentIdentity(**AGENT_ID)
+    assert json.loads(first.adapter.model_dump_json())["self_reported_agent"] == AGENT_ID
+    assert second.execution_error is None and second.adapter.self_reported_agent is None
+    assert "self_reported_agent" not in second.adapter.model_dump_json()  # absent: pre-identity JSON
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [
+        {"name": "test-agent"},
+        AGENT_ID | {"build": "x"},
+        {"name": "x" * 65, "version": "1"},
+        {"name": "test-agent", "version": "1\n"},
+        "test-agent",
+    ],
+)
+def test_malformed_identity_is_a_bad_reply_error(agent: object) -> None:
+    record, result, _ = play("cancel-single-order", lambda _: {"reply": "x", "agent": agent})
+    assert result.verdict == "error" and "bad agent reply" in (record.execution_error or "")
+    assert record.adapter.self_reported_agent is None
+
+
+@pytest.mark.parametrize("later", [AGENT_ID | {"version": "other"}, None])
+def test_identity_change_between_turns_is_an_error(later: dict[str, str] | None) -> None:
+    def agent(req: dict[str, Any]) -> dict[str, Any]:
+        reported = AGENT_ID if req["turn"] == 0 else later
+        return {"reply": "?"} | ({"agent": reported} if reported else {})
+
+    record, result, _ = play("ambiguous-previous-order", agent)
+    assert result.verdict == "error" and "agent identity changed on turn 1" in (record.execution_error or "")
+    assert record.adapter.self_reported_agent == AgentIdentity(**AGENT_ID) and len(record.turns) == 1
+    same, result, _ = play("ambiguous-previous-order", lambda _: {"reply": "?", "agent": AGENT_ID})
+    assert same.execution_error is None and same.adapter.self_reported_agent == AgentIdentity(**AGENT_ID)
+
+
+def test_config_id_follows_self_reported_version(tmp_path: Path) -> None:
+    version = ["1"]
+    ids: dict[str, str] = {}
+    # one fake agent server, so the agent URL (part of config_id) is the same for every run
+    with fake_agent(lambda _: {"reply": "x", "agent": AGENT_ID | {"version": version[0]}}) as (url, _):
+        for out, version[0] in (("v1", "1"), ("v1-again", "1"), ("v2", "2")):
+            main(["run", str(SUITE / "cancel-single-order.json"), "--agent-url", url, "--output", str(tmp_path / out)])
+            [run_dir] = (tmp_path / out).iterdir()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            assert summary["adapters"][0]["self_reported_agent"]["version"] == version[0]
+            ids[out] = summary["config_id"]
+    assert ids["v1"] == ids["v1-again"] != ids["v2"]
 
 
 def test_cli_artifact_shows_turn_deadline_and_suite_continues(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

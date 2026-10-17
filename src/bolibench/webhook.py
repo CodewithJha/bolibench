@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, ValidationError
 
 from bolibench.adapters import AdapterError
-from bolibench.models import AdapterInfo, CaseContext, Model, RefusedRequest
+from bolibench.models import AdapterInfo, AgentIdentity, CaseContext, Model, RefusedRequest
 from bolibench.sandbox import OrderSandbox
 
 BAD_JSON = object()
@@ -43,6 +43,7 @@ class ToolRequest(Model):
 
 class TurnReply(Model):
     reply: str
+    agent: AgentIdentity | None = None
 
 
 def handle_tool_request(sandbox: OrderSandbox, turn: int, payload: Any) -> tuple[int, dict[str, Any]]:
@@ -79,7 +80,8 @@ class WebhookAgentAdapter:
         check_agent_url(agent_url)
         self.agent_url = agent_url
         self.timeout = timeout  # whole-turn deadline
-        self.info = AdapterInfo(name="webhook", version="1", config={"agent_url": agent_url, "timeout": timeout})
+        self._base_info = AdapterInfo(name="webhook", version="1", config={"agent_url": agent_url, "timeout": timeout})
+        self.info = self._base_info  # per case: plus the identity the agent reported on turn 0
         # refused requests no running case can own: unknown tokens, or tokens of a case that has ended
         self.stray_calls: list[RefusedRequest] = []
         self._lock = threading.Lock()
@@ -111,6 +113,7 @@ class WebhookAgentAdapter:
     def respond(self, turn: int, utterance: str, context: CaseContext, sandbox: OrderSandbox) -> str:
         if turn == 0:
             self._conversation = secrets.token_hex(8)
+            self.info = self._base_info  # a case that fails before any reply has no identity
         token = secrets.token_urlsafe(16)
         payload = {
             "conversation": self._conversation,
@@ -129,7 +132,7 @@ class WebhookAgentAdapter:
         future = pool.submit(self._post_turn, payload)
         pool.shutdown(wait=False)
         try:
-            reply: str | None = future.result(timeout=self.timeout)
+            reply: TurnReply | None = future.result(timeout=self.timeout)
         except FutureTimeout:
             reply = None
         finally:
@@ -140,9 +143,14 @@ class WebhookAgentAdapter:
             raise crash
         if reply is None:
             raise AdapterError(f"turn deadline exceeded: no reply within {self.timeout}s")
-        return reply
+        if turn == 0:
+            self.info = self._base_info.model_copy(update={"self_reported_agent": reply.agent})
+        elif reply.agent != self.info.self_reported_agent:
+            # one case must be attributable to one agent identity
+            raise AdapterError(f"agent identity changed on turn {turn}: {self.info.self_reported_agent} -> {reply.agent}")
+        return reply.reply
 
-    def _post_turn(self, payload: dict[str, Any]) -> str:
+    def _post_turn(self, payload: dict[str, Any]) -> TurnReply:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(self.agent_url, data=data, method="POST", headers={"Content-Type": "application/json"})
         try:
@@ -154,7 +162,7 @@ class WebhookAgentAdapter:
         if len(body) > MAX_BODY:
             raise AdapterError(f"agent reply exceeds {MAX_BODY} bytes")
         try:
-            return TurnReply.model_validate_json(body).reply
+            return TurnReply.model_validate_json(body)
         except ValidationError as e:
             raise AdapterError(f"bad agent reply: {e.errors()[0]['msg']}") from e
 

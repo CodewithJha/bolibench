@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 Tool = Literal["list_orders", "get_order", "cancel_order", "update_quantity", "ask_user"]
 CallStatus = Literal["ok", "rejected", "injected_failure"]
@@ -125,10 +125,45 @@ class RefusedRequest(Model):
     token_age_s: float | None = None
 
 
+class Transcript(Model):
+    text: str
+    language: str | None = None  # as detected (or forced) by the STT provider
+    language_probability: float | None = None
+
+
+class SpeechTurn(Model):
+    """Evidence for one turn's TTS -> STT round-trip (bolibench.speech)."""
+
+    turn: int
+    utterance: str
+    transcript: Transcript
+    audio_bytes: int
+    audio_sha256: str
+    audio_file: str | None = None  # set when audio_dir is used
+    tts_s: float | None  # None = audio reused from audio_dir, no TTS call
+    stt_s: float
+
+
 class TurnRecord(Model):
     user_input: str
     asr_text: str | None = None
     agent_reply: str
+    speech: SpeechTurn | None = None  # speech runs only; omitted from JSON when absent
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_speech(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # absent speech keeps the pre-speech JSON, so text-only artifacts are unchanged
+        data = handler(self)
+        if data.get("speech") is None:
+            data.pop("speech", None)
+        return data
+
+
+class AgentIdentity(Model):
+    """What an external agent says it is. Self-reported, never verified; not used by the evaluator."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[\x20-\x7e]+$")
+    version: str = Field(min_length=1, max_length=128, pattern=r"^[\x20-\x7e]+$")
 
 
 class AdapterInfo(Model):
@@ -136,6 +171,15 @@ class AdapterInfo(Model):
     version: str
     config: dict[str, Any] = {}  # must not contain credentials
     seed: int | None = None
+    self_reported_agent: AgentIdentity | None = None  # omitted from JSON when absent
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_agent(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # absent identity keeps the pre-identity JSON, so artifacts and config_id of such runs are unchanged
+        data = handler(self)
+        if data.get("self_reported_agent") is None:
+            data.pop("self_reported_agent", None)
+        return data
 
 
 class RunRecord(Model):
@@ -182,7 +226,7 @@ class Summary(Model):
     counts: dict[Verdict, int]
     cases: dict[str, Verdict]
     adapters: list[AdapterInfo]  # distinct adapter infos across the run's artifacts
-    config_id: str  # sha256 prefix of `adapters` (agent URL/script path, timeouts)
+    config_id: str  # sha256 prefix of `adapters`: name, version, config, seed, self-reported agent identity
 
 
 class Artifact(Model):
