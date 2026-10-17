@@ -1,0 +1,17 @@
+{
+  "id": "cancel-single-order",
+  "status": "proposed",
+  "tags": ["straightforward"],
+  "turns": ["Please cancel my order ORD-201."],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-201", "item": "Saree", "seller": "Lakshmi Textiles", "quantity": 1, "status": "placed", "placed_on": "2026-10-14"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-201.status": "cancelled"},
+    "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-201"}}]
+  },
+  "provenance": "hand-written synthetic"
+}

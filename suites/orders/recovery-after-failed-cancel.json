@@ -1,0 +1,37 @@
+{
+  "id": "recovery-after-failed-cancel",
+  "status": "proposed",
+  "tags": ["recovery", "tool_failure", "multi_step", "code_switching"],
+  "turns": ["ORD-121 cancel कर दो और ORD-122 की quantity 2 कर दो।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-121", "item": "Bedsheet", "seller": "Jaipur Prints", "quantity": 1, "status": "placed", "placed_on": "2026-10-13"},
+      {"id": "ORD-122", "item": "Pillow Cover", "seller": "Jaipur Prints", "quantity": 1, "status": "placed", "placed_on": "2026-10-13"},
+      {"id": "ORD-123", "item": "Curtain", "seller": "Jaipur Prints", "quantity": 1, "status": "placed", "placed_on": "2026-10-14"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {
+      "orders.ORD-121.status": "cancelled",
+      "orders.ORD-122.status": "placed",
+      "orders.ORD-122.quantity": 2,
+      "orders.ORD-123.status": "placed",
+      "orders.ORD-123.quantity": 1
+    },
+    "required_actions": [
+      {"tool": "cancel_order", "args": {"order_id": "ORD-121"}, "max_attempts": 2},
+      {"tool": "update_quantity", "args": {"order_id": "ORD-122", "quantity": 2}}
+    ],
+    "forbidden_actions": [
+      {"tool": "cancel_order", "args": {"order_id": "ORD-122"}},
+      {"tool": "cancel_order", "args": {"order_id": "ORD-123"}},
+      {"tool": "update_quantity", "args": {"order_id": "ORD-121"}},
+      {"tool": "update_quantity", "args": {"order_id": "ORD-123"}}
+    ]
+  },
+  "inject_failures": [
+    {"tool": "cancel_order", "call": 1, "error": "timeout talking to order service"}
+  ],
+  "provenance": "hand-written synthetic"
+}

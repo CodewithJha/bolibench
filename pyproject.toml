@@ -1,0 +1,18 @@
+[project]
+name = "bolibench"
+version = "0.1.0"
+description = "An open-source benchmark for evaluating conversational AI agents through task correctness, tool-call behavior, and state-transition verification."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2,<3"]
+
+[project.scripts]
+bolibench = "bolibench.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

@@ -1,0 +1,20 @@
+{
+  "id": "tool-failure-cancel",
+  "status": "proposed",
+  "tags": ["tool_failure", "code_switching"],
+  "turns": ["ORD-111 cancel कर दो, जल्दी।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-111", "item": "Mixer Grinder", "seller": "Mohan Stores", "quantity": 1, "status": "placed", "placed_on": "2026-10-15"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-111.status": "cancelled"},
+    "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-111"}, "max_attempts": 2}]
+  },
+  "inject_failures": [
+    {"tool": "cancel_order", "call": 1, "error": "503 Service Unavailable: order service busy, please retry"}
+  ],
+  "provenance": "hand-written synthetic"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "similar-items-kurta-kurti",
+  "status": "proposed",
+  "tags": ["similar_entities", "code_switching"],
+  "turns": ["कुर्ती वाले order की quantity 2 कर दो।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-701", "item": "Kurta", "seller": "Rangoli Fashions", "quantity": 1, "status": "placed", "placed_on": "2026-10-13"},
+      {"id": "ORD-702", "item": "Kurti", "seller": "Rangoli Fashions", "quantity": 1, "status": "placed", "placed_on": "2026-10-13"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-701.quantity": 1, "orders.ORD-702.quantity": 2},
+    "required_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-702", "quantity": 2}}],
+    "forbidden_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-701"}}]
+  },
+  "provenance": "hand-written synthetic"
+}

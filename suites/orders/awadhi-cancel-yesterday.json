@@ -1,0 +1,20 @@
+{
+  "id": "awadhi-cancel-yesterday",
+  "status": "proposed",
+  "tags": ["awadhi", "dialect", "relative_date"],
+  "turns": ["ऊ वाला order जउन कल मँगाए रहेन, ओका रद्द कइ दें।"],
+  "context": {"today": "2026-10-17"},
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-401", "item": "Chappal", "seller": "Awadh Footwear", "quantity": 1, "status": "placed", "placed_on": "2026-10-16"},
+      {"id": "ORD-402", "item": "Steel Lota", "seller": "Gomti Bartan Bhandar", "quantity": 2, "status": "placed", "placed_on": "2026-10-09"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-401.status": "cancelled", "orders.ORD-402.status": "placed"},
+    "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-401"}}],
+    "forbidden_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-402"}}]
+  },
+  "provenance": "hand-written synthetic"
+}

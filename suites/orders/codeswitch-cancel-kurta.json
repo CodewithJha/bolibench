@@ -1,0 +1,19 @@
+{
+  "id": "codeswitch-cancel-kurta",
+  "status": "proposed",
+  "tags": ["code_switching"],
+  "turns": ["मेरा Kurta वाला order cancel कर दो please, अब नहीं चाहिए।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-301", "item": "Kurta", "seller": "Rangoli Fashions", "quantity": 1, "status": "placed", "placed_on": "2026-10-12"},
+      {"id": "ORD-302", "item": "Dupatta", "seller": "Rangoli Fashions", "quantity": 1, "status": "placed", "placed_on": "2026-10-13"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-301.status": "cancelled", "orders.ORD-302.status": "placed"},
+    "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-301"}}],
+    "forbidden_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-302"}}]
+  },
+  "provenance": "hand-written synthetic"
+}

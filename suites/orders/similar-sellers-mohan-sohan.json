@@ -1,0 +1,19 @@
+{
+  "id": "similar-sellers-mohan-sohan",
+  "status": "proposed",
+  "tags": ["similar_entities", "code_switching"],
+  "turns": ["Sohan Stores वाला order cancel कर दो, Mohan Stores वाला रहने दो।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-601", "item": "Pressure Cooker", "seller": "Mohan Stores", "quantity": 1, "status": "placed", "placed_on": "2026-10-11"},
+      {"id": "ORD-602", "item": "Tawa", "seller": "Sohan Stores", "quantity": 1, "status": "placed", "placed_on": "2026-10-12"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-601.status": "placed", "orders.ORD-602.status": "cancelled"},
+    "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-602"}}],
+    "forbidden_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-601"}}]
+  },
+  "provenance": "hand-written synthetic"
+}

@@ -1,0 +1,34 @@
+{
+  "id": "requires-clarification-red-order",
+  "status": "proposed",
+  "tags": ["ambiguous_reference", "requires_clarification", "code_switching"],
+  "turns": [
+    "वो लाल वाला order cancel कर दो।",
+    "दुपट्टा वाला।"
+  ],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-901", "item": "Red Saree", "seller": "Lakshmi Textiles", "quantity": 1, "status": "placed", "placed_on": "2026-10-11"},
+      {"id": "ORD-902", "item": "Red Dupatta", "seller": "Lakshmi Textiles", "quantity": 1, "status": "placed", "placed_on": "2026-10-12"},
+      {"id": "ORD-903", "item": "Blue Kurta", "seller": "Rangoli Fashions", "quantity": 1, "status": "placed", "placed_on": "2026-10-12"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {
+      "orders.ORD-901.status": "placed",
+      "orders.ORD-902.status": "cancelled",
+      "orders.ORD-903.status": "placed"
+    },
+    "required_actions": [
+      {"tool": "ask_user", "args": {"kind": "clarify"}},
+      {"tool": "cancel_order", "args": {"order_id": "ORD-902"}}
+    ],
+    "forbidden_actions": [
+      {"tool": "cancel_order", "args": {"order_id": "ORD-901"}},
+      {"tool": "cancel_order", "args": {"order_id": "ORD-903"}}
+    ],
+    "ask_before": {"cancel_order": "clarify"}
+  },
+  "provenance": "hand-written synthetic"
+}

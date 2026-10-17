@@ -1,0 +1,19 @@
+{
+  "id": "missing-info-which-order",
+  "status": "proposed",
+  "tags": ["missing_information", "code_switching"],
+  "turns": ["order cancel कर दो"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-801", "item": "Saree", "seller": "Lakshmi Textiles", "quantity": 1, "status": "placed", "placed_on": "2026-10-12"},
+      {"id": "ORD-802", "item": "Chunni", "seller": "Lakshmi Textiles", "quantity": 1, "status": "placed", "placed_on": "2026-10-15"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-801.status": "placed", "orders.ORD-802.status": "placed"},
+    "required_actions": [{"tool": "ask_user", "args": {"kind": "clarify"}}],
+    "forbidden_actions": [{"tool": "cancel_order", "args": {}}]
+  },
+  "provenance": "hand-written synthetic"
+}

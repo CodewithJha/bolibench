@@ -1,0 +1,22 @@
+{
+  "id": "correction-quantity",
+  "status": "proposed",
+  "tags": ["correction", "code_switching"],
+  "turns": ["चूड़ियों वाले order की quantity 2 कर दो… नहीं नहीं, 3 कर दो।"],
+  "initial_state": {
+    "orders": [
+      {"id": "ORD-501", "item": "Glass Bangles", "seller": "Firozabad Choodi Ghar", "quantity": 1, "status": "placed", "placed_on": "2026-10-14"},
+      {"id": "ORD-502", "item": "Bindi Pack", "seller": "Firozabad Choodi Ghar", "quantity": 1, "status": "placed", "placed_on": "2026-10-14"}
+    ]
+  },
+  "expected": {
+    "exclusive_actions": true,
+    "final_state": {"orders.ORD-501.quantity": 3, "orders.ORD-502.quantity": 1},
+    "required_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-501", "quantity": 3}}],
+    "forbidden_actions": [
+      {"tool": "update_quantity", "args": {"order_id": "ORD-501", "quantity": 2}},
+      {"tool": "update_quantity", "args": {"order_id": "ORD-502"}}
+    ]
+  },
+  "provenance": "hand-written synthetic"
+}
