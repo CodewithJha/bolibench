@@ -5,5 +5,11 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
-runs/
+/runs/
 .env
+.env.*
+!.env.example
+node_modules/
+audio-cache/
+*.mp3
+/.cursor/
