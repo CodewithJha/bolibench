@@ -241,7 +241,11 @@ def span(op: str, name: str, data: dict[str, Any]) -> Iterator[Any]:
     with sentry.start_span(op=op, name=name) as s:
         for key, value in data.items():
             s.set_data(key, value)
-        yield s
+        try:
+            yield s
+        except Exception as e:  # the SDK sets the error status as the exception leaves the span
+            s.set_data("error.type", type(e).__name__)
+            raise
 
 
 def provider(cfg: Config) -> str:
@@ -319,7 +323,11 @@ def turn(req: dict[str, Any], cfg: Config) -> str:
         for key, value in {"model": cfg.model, "agent.version": agent["version"], "backend": cfg.backend, "tool_mode": cfg.tool_mode}.items():
             transaction.set_tag(key, value)
         sentry.ai.set_conversation_id(req["conversation"])
-        return agent_turn(req, cfg)
+        try:
+            return agent_turn(req, cfg)
+        except Exception as e:  # the HTTP server would swallow it; BoliBench records the turn as `error`
+            sentry.capture_exception(e)
+            raise
 
 
 def init_sentry(environ: Mapping[str, str], capture_content: bool) -> Any:
@@ -341,8 +349,9 @@ def init_sentry(environ: Mapping[str, str], capture_content: bool) -> Any:
     if not 0.0 <= rate <= 1.0:
         raise SystemExit("SENTRY_TRACES_SAMPLE_RATE must be a number from 0 to 1")
     # SDK PII defaults stay conservative; content is only what agent_turn adds under --sentry-capture-content.
+    # No frame locals on error events: they hold the utterance, and post()'s Authorization header unscrubbed.
     # No trace headers on outgoing calls: they would reach the model provider and the tool gateway.
-    sentry_sdk.init(dsn=dsn, traces_sample_rate=rate, trace_propagation_targets=[])
+    sentry_sdk.init(dsn=dsn, traces_sample_rate=rate, include_local_variables=False, trace_propagation_targets=[])
     return sentry_sdk
 
 

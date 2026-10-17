@@ -5,6 +5,7 @@ import importlib.util
 import json
 import sys
 import threading
+import urllib.error
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -172,7 +173,7 @@ def test_json_mode_malformed_call_is_the_reply_and_runs_no_tool(monkeypatch: pyt
 
 
 @contextlib.contextmanager
-def fake_openai_server(script: list[dict[str, Any]]) -> Iterator[tuple[str, list[dict[str, Any]]]]:
+def fake_openai_server(script: list[Any]) -> Iterator[tuple[str, list[dict[str, Any]]]]:
     """A local OpenAI-compatible endpoint plus tool gateway; yields its base URL and every request seen."""
     seen: list[dict[str, Any]] = []
 
@@ -181,8 +182,9 @@ def fake_openai_server(script: list[dict[str, Any]]) -> Iterator[tuple[str, list
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             seen.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": body})
             reply = script.pop(0) if self.path == "/v1/chat/completions" else {"ok": True, "result": [{"id": "ORD-1"}], "error": None}
-            data = json.dumps(reply).encode()
-            self.send_response(200)
+            status = reply if isinstance(reply, int) else 200  # an int in the script is an HTTP error
+            data = json.dumps({"error": {"message": "stub error", "code": status}} if isinstance(reply, int) else reply).encode()
+            self.send_response(status)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -217,6 +219,19 @@ def test_openai_backend_speaks_chat_completions_with_a_bearer_key() -> None:
         {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "list_orders", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "call_1", "content": json.dumps({"ok": True, "result": [{"id": "ORD-1"}], "error": None})},
     ]
+
+
+def openai_cfg(base: str) -> Any:
+    return agent.config(args(backend="openai", base_url=base + "/v1", api_key_env="K"), {"K": "sk-secret"})
+
+
+@pytest.mark.parametrize("status", [401, 429, 500, 503])
+def test_openai_http_errors_fail_the_turn_once_without_the_key(status: int) -> None:
+    with fake_openai_server([status]) as (base, seen):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            agent.turn(request(f"openai-{status}") | {"tools_url": base + "/runs/t/tools"}, openai_cfg(base))
+    assert e.value.code == status and len(seen) == 1  # no retry
+    assert "sk-secret" not in str(e.value) and "sk-secret" not in repr(e.value)
 
 
 class FakeSpan:
@@ -321,13 +336,12 @@ def test_dsn_without_sentry_sdk_exits_instead_of_skipping(monkeypatch: pytest.Mo
         agent.init_sentry({"SENTRY_DSN": "https://k@o1.ingest.sentry.io/1"}, False)
 
 
-@pytest.mark.parametrize("capture", [False, True])
-def test_real_sentry_sdk_sends_gen_ai_spans_to_an_in_memory_transport(monkeypatch: pytest.MonkeyPatch, capture: bool) -> None:
+@contextlib.contextmanager
+def real_sentry(monkeypatch: pytest.MonkeyPatch, capture: bool) -> Iterator[list[Any]]:
+    """The real sentry_sdk as init_sentry sets it up, sending every envelope item to a list instead of Sentry."""
     sentry_sdk = pytest.importorskip("sentry_sdk")
     from sentry_sdk.transport import Transport
 
-    with pytest.raises(SystemExit, match="SENTRY_TRACES_SAMPLE_RATE"):
-        agent.init_sentry({"SENTRY_DSN": "https://k@o1.ingest.sentry.io/1", "SENTRY_TRACES_SAMPLE_RATE": "2"}, False)
     items: list[Any] = []
 
     class Memory(Transport):
@@ -338,14 +352,34 @@ def test_real_sentry_sdk_sends_gen_ai_spans_to_an_in_memory_transport(monkeypatc
     try:
         sdk.get_client().transport = Memory(sdk.get_client().options)
         monkeypatch.setattr(agent, "sentry", sdk)
-        monkeypatch.setattr(agent, "post", FakeBackend(
-            [ollama(tool_calls=[call("list_orders")]), ollama("ठीक है")], [{"ok": True, "result": [], "error": None}]))
-        assert agent.turn(request(f"real-{capture}"), agent.Config("qwen3:8b", capture_content=capture)) == "ठीक है"
+        yield items
         sdk.flush()
     finally:
         sentry_sdk.init()  # no DSN: disabled again for the rest of the session
+
+
+@pytest.mark.parametrize("capture", [False, True])
+def test_real_sentry_sdk_sends_gen_ai_spans_to_an_in_memory_transport(monkeypatch: pytest.MonkeyPatch, capture: bool) -> None:
+    pytest.importorskip("sentry_sdk")
+    with pytest.raises(SystemExit, match="SENTRY_TRACES_SAMPLE_RATE"):
+        agent.init_sentry({"SENTRY_DSN": "https://k@o1.ingest.sentry.io/1", "SENTRY_TRACES_SAMPLE_RATE": "2"}, False)
+    with real_sentry(monkeypatch, capture) as items:
+        monkeypatch.setattr(agent, "post", FakeBackend(
+            [ollama(tool_calls=[call("list_orders")]), ollama("ठीक है")], [{"ok": True, "result": [], "error": None}]))
+        assert agent.turn(request(f"real-{capture}"), agent.Config("qwen3:8b", capture_content=capture)) == "ठीक है"
     events = json.dumps(items, ensure_ascii=False)
     for op in ["gen_ai.invoke_agent", "gen_ai.chat", "gen_ai.execute_tool"]:
         assert op in events
     assert f"real-{capture}" in events and "qwen3:8b" in events and "gen_ai.usage.input_tokens" in events
     assert ("मेरा ऑर्डर" in events) is capture and ("gen_ai.tool.call.arguments" in events) is capture
+
+
+def test_real_sentry_sdk_reports_a_failed_model_call_without_content_or_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    with real_sentry(monkeypatch, False) as items, fake_openai_server([401]) as (base, _):
+        with pytest.raises(urllib.error.HTTPError):
+            agent.turn(request("real-error") | {"tools_url": base + "/runs/t/tools"}, openai_cfg(base))
+    [error] = [item for item in items if "exception" in item]
+    assert error["exception"]["values"][-1]["type"] == "HTTPError"
+    events = json.dumps(items, ensure_ascii=False)
+    assert events.count('"error.type": {"value": "HTTPError"') == 2  # the failed chat span and its invoke_agent span
+    assert not any(secret in events for secret in ("sk-secret", "मेरा ऑर्डर", "customer-support")), events
