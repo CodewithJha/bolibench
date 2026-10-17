@@ -1,0 +1,10 @@
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!suites/
+!demo/
+!examples/ollama_agent.py
+!deploy/start.sh
+**/__pycache__
