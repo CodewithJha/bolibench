@@ -264,7 +264,12 @@ if HAVE_TEMPORAL:
 
     async def connect() -> Client:
         # TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TEMPORAL_API_KEY (enables TLS), or a temporal.toml profile
-        return await Client.connect(**{"target_host": "localhost:7233", **ClientConfig.load_client_connect_config()})
+        config = {"target_host": "localhost:7233", **ClientConfig.load_client_connect_config()}
+        try:
+            return await Client.connect(**config)
+        except RuntimeError as e:  # temporalio raises a bare RuntimeError for an unreachable server
+            print(f"error: cannot connect to Temporal at {config['target_host']}: {e}", file=sys.stderr)
+            raise SystemExit(2) from None
 
 
 def suite_input(args: argparse.Namespace) -> SuiteInput:

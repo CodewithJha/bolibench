@@ -252,3 +252,16 @@ def test_programming_errors_fail_the_workflow_without_retry(tmp_path: Path) -> N
     with pytest.raises(WorkflowFailureError):
         run_workflow(tr.suite_input(setup(tmp_path)), broken)
     assert calls == ["ambiguous-previous-order"]
+
+
+@pytest.mark.parametrize("command", ["worker", "start"])
+def test_unreachable_server_is_an_error_line_not_a_traceback(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    pytest.importorskip("temporalio")
+    monkeypatch.setenv("TEMPORAL_ADDRESS", "127.0.0.1:1")
+    args = setup(tmp_path)
+    argv = ["worker"] if command == "worker" else ["start", str(args.cases), "--scripts", str(args.scripts), "--output", str(args.output)]
+    with pytest.raises(SystemExit) as exit_info:
+        tr.main(argv)
+    assert exit_info.value.code == 2
+    assert "error: cannot connect to Temporal at 127.0.0.1:1" in capsys.readouterr().err
+    assert not args.output.exists()

@@ -47,6 +47,8 @@ python -m bolibench.temporal_run start suites/orders --agent-url http://127.0.0.
 `start` takes the same inputs as `bolibench run` and checks them the same way (exit 2, nothing runs).
 It also takes `--workflow-id ID` (default `<UTC timestamp>-<random>`, the same shape as
 `bolibench run` directory names) and `--max-attempts N`. The run directory is `<output>/<workflow id>`.
+If the server is unreachable, `worker` and `start` print `error: cannot connect to Temporal at <address>: ...`
+and exit 2; nothing runs.
 
 - Killing `start` does not stop the run; the worker carries on. Run the same `start ... --workflow-id ID`
   again to wait for it.
