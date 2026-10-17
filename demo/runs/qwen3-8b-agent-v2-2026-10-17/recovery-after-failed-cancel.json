@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "case_id": "recovery-after-failed-cancel",
+  "run": {
+    "run_id": "da4d9a9b4043489a8dcb5517724c0d07",
+    "case_id": "recovery-after-failed-cancel",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8000/turn",
+        "timeout": 180.0
+      },
+      "seed": null
+    },
+    "started_at": "2026-10-17T07:02:20.319013Z",
+    "finished_at": "2026-10-17T07:02:28.409654Z",
+    "turns": [
+      {
+        "user_input": "ORD-121 cancel कर दो और ORD-122 की quantity 2 कर दो।",
+        "asr_text": null,
+        "agent_reply": "Your order ORD-121 has been cancelled, and the quantity for ORD-122 has been updated to 2. Let me know if you need further assistance!"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_orders",
+        "args": {},
+        "status": "ok",
+        "result": [
+          {
+            "id": "ORD-121",
+            "item": "Bedsheet",
+            "seller": "Jaipur Prints",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-13"
+          },
+          {
+            "id": "ORD-122",
+            "item": "Pillow Cover",
+            "seller": "Jaipur Prints",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-13"
+          },
+          {
+            "id": "ORD-123",
+            "item": "Curtain",
+            "seller": "Jaipur Prints",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-14"
+          }
+        ],
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "ORD-121"
+        },
+        "status": "injected_failure",
+        "result": null,
+        "error": "timeout talking to order service"
+      },
+      {
+        "turn": 0,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "ORD-121"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-121",
+          "item": "Bedsheet",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-13"
+        },
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "update_quantity",
+        "args": {
+          "order_id": "ORD-122",
+          "quantity": 2
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-122",
+          "item": "Pillow Cover",
+          "seller": "Jaipur Prints",
+          "quantity": 2,
+          "status": "placed",
+          "placed_on": "2026-10-13"
+        },
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-121",
+          "item": "Bedsheet",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-13"
+        },
+        {
+          "id": "ORD-122",
+          "item": "Pillow Cover",
+          "seller": "Jaipur Prints",
+          "quantity": 2,
+          "status": "placed",
+          "placed_on": "2026-10-13"
+        },
+        {
+          "id": "ORD-123",
+          "item": "Curtain",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "pass",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "pass",
+        "evidence": [
+          "final_state.orders.ORD-121.status",
+          "final_state.orders.ORD-122.status",
+          "final_state.orders.ORD-122.quantity",
+          "final_state.orders.ORD-123.status",
+          "final_state.orders.ORD-123.quantity"
+        ],
+        "detail": "5 paths match"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls[2]",
+          "tool_calls[3]"
+        ],
+        "detail": "2 succeeded"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": []
+  }
+}

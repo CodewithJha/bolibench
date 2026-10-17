@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "case_id": "requires-clarification-red-order",
+  "run": {
+    "run_id": "7811a0c8d5374867b0266fccdc679bfb",
+    "case_id": "requires-clarification-red-order",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8100/turn",
+        "timeout": 180.0
+      },
+      "seed": null,
+      "self_reported_agent": {
+        "name": "bolibench-example-ollama-agent",
+        "version": "98ab4c7ef5c4+gemma3:4b+ollama-json"
+      }
+    },
+    "started_at": "2026-10-17T16:47:57.705796Z",
+    "finished_at": "2026-10-17T16:48:12.865046Z",
+    "turns": [
+      {
+        "user_input": "वो लाल वाला order cancel कर दो।",
+        "asr_text": null,
+        "agent_reply": "{\"tool_calls\": [{\"name\": \"ask_user\", \"arguments\": {\"kind\": \"clarify\", \"question\": \"आप कौन सा order cancel करना चाहते हैं? कृपया order id बताएं।\"}}]"
+      },
+      {
+        "user_input": "दुपट्टा वाला।",
+        "asr_text": null,
+        "agent_reply": "Order cancelled."
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_orders",
+        "args": {},
+        "status": "ok",
+        "result": [
+          {
+            "id": "ORD-901",
+            "item": "Red Saree",
+            "seller": "Lakshmi Textiles",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-11"
+          },
+          {
+            "id": "ORD-902",
+            "item": "Red Dupatta",
+            "seller": "Lakshmi Textiles",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-12"
+          },
+          {
+            "id": "ORD-903",
+            "item": "Blue Kurta",
+            "seller": "Rangoli Fashions",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-12"
+          }
+        ],
+        "error": null
+      },
+      {
+        "turn": 1,
+        "tool": "get_order",
+        "args": {
+          "order_id": "ORD-902"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-902",
+          "item": "Red Dupatta",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-12"
+        },
+        "error": null
+      },
+      {
+        "turn": 1,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "ORD-902"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-902",
+          "item": "Red Dupatta",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-12"
+        },
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-901",
+          "item": "Red Saree",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-11"
+        },
+        {
+          "id": "ORD-902",
+          "item": "Red Dupatta",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-12"
+        },
+        {
+          "id": "ORD-903",
+          "item": "Blue Kurta",
+          "seller": "Rangoli Fashions",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-12"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "fail",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "pass",
+        "evidence": [
+          "final_state.orders.ORD-901.status",
+          "final_state.orders.ORD-902.status",
+          "final_state.orders.ORD-903.status"
+        ],
+        "detail": "3 paths match"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "fail",
+        "evidence": [
+          "expected.required_actions[0]"
+        ],
+        "detail": "no successful call for: ask_user {'kind': 'clarify'}"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "fail",
+        "evidence": [
+          "tool_calls[2]"
+        ],
+        "detail": "no ask_user(clarify) in a turn before cancel_order at tool_calls[2]"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": [
+      {
+        "category": "ambiguity_handling",
+        "stage": "dialogue",
+        "evidence": [
+          "tool_calls[2]",
+          "expected.required_actions[0]"
+        ],
+        "method": "deterministic",
+        "confidence": "likely"
+      }
+    ]
+  }
+}

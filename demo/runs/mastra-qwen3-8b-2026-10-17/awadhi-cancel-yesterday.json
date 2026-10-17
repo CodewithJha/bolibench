@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "case_id": "awadhi-cancel-yesterday",
+  "run": {
+    "run_id": "3be3ebd3a8e246cb812fbcd386cb6516",
+    "case_id": "awadhi-cancel-yesterday",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8031/turn",
+        "timeout": 180.0
+      },
+      "seed": null,
+      "self_reported_agent": {
+        "name": "bolibench-mastra-agent",
+        "version": "0.1.0+qwen3:8b"
+      }
+    },
+    "started_at": "2026-10-17T16:39:15.969272Z",
+    "finished_at": "2026-10-17T16:39:28.161396Z",
+    "turns": [
+      {
+        "user_input": "ऊ वाला order जउन कल मँगाए रहेन, ओका रद्द कइ दें।",
+        "asr_text": null,
+        "agent_reply": "कल मँगाए रहेन के लिए कौन सा आर्डर रद्द करें? (ओका आईडी बताएं)"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_orders",
+        "args": {},
+        "status": "ok",
+        "result": [
+          {
+            "id": "ORD-401",
+            "item": "Chappal",
+            "seller": "Awadh Footwear",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-16"
+          },
+          {
+            "id": "ORD-402",
+            "item": "Steel Lota",
+            "seller": "Gomti Bartan Bhandar",
+            "quantity": 2,
+            "status": "placed",
+            "placed_on": "2026-10-09"
+          }
+        ],
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-401",
+          "item": "Chappal",
+          "seller": "Awadh Footwear",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-16"
+        },
+        {
+          "id": "ORD-402",
+          "item": "Steel Lota",
+          "seller": "Gomti Bartan Bhandar",
+          "quantity": 2,
+          "status": "placed",
+          "placed_on": "2026-10-09"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "fail",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "fail",
+        "evidence": [
+          "final_state.orders.ORD-401.status"
+        ],
+        "detail": "orders.ORD-401.status: expected 'cancelled', got 'placed'"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "fail",
+        "evidence": [
+          "expected.required_actions[0]"
+        ],
+        "detail": "no successful call for: cancel_order {'order_id': 'ORD-401'}"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": [
+      {
+        "category": "unclassified",
+        "stage": "unknown",
+        "evidence": [
+          "final_state.orders.ORD-401.status",
+          "expected.required_actions[0]"
+        ],
+        "method": "deterministic",
+        "confidence": "possible"
+      }
+    ]
+  }
+}

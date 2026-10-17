@@ -1,0 +1,44 @@
+{
+  "runs": [
+    {
+      "label": "qwen3-8b-baseline-2026-10-17",
+      "source": "runs/qwen3-8b-baseline-2026-10-17/20261017T064824Z-6ec70da2",
+      "date": "2026-10-17",
+      "model": "qwen3:8b (Ollama 0.30.10, ID 500a1f067a9f, Q4_K_M, temperature 0.6)",
+      "agent": "examples/ollama_agent.py v1 at commit 1a91e20, sha256 4b68d3828e98ca85a8ca325da808894bd23a7b46caf30ef0e905936a7bd868ed",
+      "note": "single unseeded run; see docs/audits/qwen3-8b-baseline-2026-10-17.md"
+    },
+    {
+      "label": "qwen3-8b-agent-v2-2026-10-17",
+      "source": "runs/qwen3-8b-agent-v2-2026-10-17/20261017T070131Z-317851a2",
+      "date": "2026-10-17",
+      "model": "qwen3:8b (Ollama 0.30.10, ID 500a1f067a9f, Q4_K_M, temperature 0.6)",
+      "agent": "examples/ollama_agent.py v2 (uncommitted on 1a91e20), sha256 4fb5a6e079ed1202610419e3fd5c84237235bc246daedbc500bca4dc581c58e4",
+      "note": "single unseeded run; see docs/audits/qwen3-8b-agent-v2-2026-10-17.md"
+    },
+    {
+      "label": "qwen3-8b-agent-v3-2026-10-17",
+      "source": "runs/qwen3-8b-agent-v3-2026-10-17/20261017T164911Z-2927942a",
+      "date": "2026-10-17",
+      "model": "qwen3:8b (Ollama 0.30.10, ID 500a1f067a9f, Q4_K_M, temperature 0.6), native tool calling",
+      "agent": "examples/ollama_agent.py v3 (uncommitted on 4c7af08), sha256 98ab4c7ef5c482f1b591db3289f130136d3d0677386e73e6c0806b14579c7517",
+      "note": "single unseeded run; see docs/audits/gemma-gemma3-4b-2026-10-17.md"
+    },
+    {
+      "label": "gemma-gemma3-4b-2026-10-17",
+      "source": "runs/gemma-gemma3-4b-2026-10-17/20261017T164713Z-a6d439e3",
+      "date": "2026-10-17",
+      "model": "gemma3:4b (Ollama 0.30.10, ID a2af6cc3eb7f, Q4_K_M, temperature 1), JSON tool mode: no native tool calling",
+      "agent": "examples/ollama_agent.py v3 --tool-mode json (uncommitted on 4c7af08), sha256 98ab4c7ef5c482f1b591db3289f130136d3d0677386e73e6c0806b14579c7517",
+      "note": "single unseeded run (the audited third attempt; two earlier attempts lost the agent process and are not bundled); see docs/audits/gemma-gemma3-4b-2026-10-17.md"
+    },
+    {
+      "label": "mastra-qwen3-8b-2026-10-17",
+      "source": "runs/mastra-qwen3-8b-2026-10-17/20261017T163808Z-f72f5021",
+      "date": "2026-10-17",
+      "model": "qwen3:8b (Ollama 0.30.10, Q4_K_M) through Mastra's model router",
+      "agent": "examples/mastra-agent 0.1.0, a Mastra framework agent (@mastra/core 1.78.0), not the Python example; its self-reported version is the package.json version, not a code hash",
+      "note": "single unseeded run; see docs/integrations/mastra.md"
+    }
+  ]
+}

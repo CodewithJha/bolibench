@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "case_id": "requires-clarification-red-order",
+  "run": {
+    "run_id": "478ee6ed07c6445791ef912a45c93a68",
+    "case_id": "requires-clarification-red-order",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8000/turn",
+        "timeout": 180.0
+      },
+      "seed": null
+    },
+    "started_at": "2026-10-17T06:51:21.844798Z",
+    "finished_at": "2026-10-17T06:51:59.888976Z",
+    "turns": [
+      {
+        "user_input": "वो लाल वाला order cancel कर दो।",
+        "asr_text": null,
+        "agent_reply": "कृपया बताएं कि आपका लाल वाला order का आईडी क्या है जिसे हम रद्द कर दें।"
+      },
+      {
+        "user_input": "दुपट्टा वाला।",
+        "asr_text": null,
+        "agent_reply": "कृपया बताएं कि आपका दुपट्टा वाला order का आईडी क्या है जिसे हम रद्द कर दें।"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "ask_user",
+        "args": {
+          "kind": "confirm",
+          "question": "कृपया बताएं कि आपका लाल वाला कौन सा order है जिसे हम रद्द कर दें।"
+        },
+        "status": "ok",
+        "result": null,
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "लाल वाला"
+        },
+        "status": "rejected",
+        "result": null,
+        "error": "no such order: लाल वाला"
+      },
+      {
+        "turn": 0,
+        "tool": "ask_user",
+        "args": {
+          "question": "कृपया बताएं कि आपका लाल वाला order का आईडी क्या है जिसे हम रद्द कर दें।",
+          "kind": "clarify"
+        },
+        "status": "ok",
+        "result": null,
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "लाल वाला"
+        },
+        "status": "rejected",
+        "result": null,
+        "error": "no such order: लाल वाला"
+      },
+      {
+        "turn": 1,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "दुपट्टा वाला"
+        },
+        "status": "rejected",
+        "result": null,
+        "error": "no such order: दुपट्टा वाला"
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-901",
+          "item": "Red Saree",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-11"
+        },
+        {
+          "id": "ORD-902",
+          "item": "Red Dupatta",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-12"
+        },
+        {
+          "id": "ORD-903",
+          "item": "Blue Kurta",
+          "seller": "Rangoli Fashions",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-12"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "fail",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "fail",
+        "evidence": [
+          "final_state.orders.ORD-902.status"
+        ],
+        "detail": "orders.ORD-902.status: expected 'cancelled', got 'placed'"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "fail",
+        "evidence": [
+          "expected.required_actions[1]"
+        ],
+        "detail": "no successful call for: cancel_order {'order_id': 'ORD-902'}"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "fail",
+        "evidence": [
+          "tool_calls[1]",
+          "tool_calls[3]",
+          "tool_calls[4]"
+        ],
+        "detail": "forbidden calls (incl. past max_attempts or outside exclusive_actions) made: cancel_order {'order_id': 'लाल वाला'} (rejected), cancel_order {'order_id': 'लाल वाला'} (rejected), cancel_order {'order_id': 'दुपट्टा वाला'} (rejected)"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "fail",
+        "evidence": [
+          "tool_calls[1]"
+        ],
+        "detail": "no ask_user(clarify) in a turn before cancel_order at tool_calls[1]"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": [
+      {
+        "category": "ambiguity_handling",
+        "stage": "dialogue",
+        "evidence": [
+          "tool_calls[1]"
+        ],
+        "method": "deterministic",
+        "confidence": "likely"
+      },
+      {
+        "category": "entity_resolution",
+        "stage": "understanding",
+        "evidence": [
+          "expected.required_actions[1]",
+          "tool_calls[1]",
+          "tool_calls[3]",
+          "tool_calls[4]"
+        ],
+        "method": "deterministic",
+        "confidence": "likely"
+      }
+    ]
+  }
+}

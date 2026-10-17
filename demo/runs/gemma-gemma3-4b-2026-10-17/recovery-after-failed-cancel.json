@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "case_id": "recovery-after-failed-cancel",
+  "run": {
+    "run_id": "57b63b071ed447a7a9c7a02f6b9c3630",
+    "case_id": "recovery-after-failed-cancel",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8100/turn",
+        "timeout": 180.0
+      },
+      "seed": null,
+      "self_reported_agent": {
+        "name": "bolibench-example-ollama-agent",
+        "version": "98ab4c7ef5c4+gemma3:4b+ollama-json"
+      }
+    },
+    "started_at": "2026-10-17T16:47:54.350978Z",
+    "finished_at": "2026-10-17T16:47:57.704223Z",
+    "turns": [
+      {
+        "user_input": "ORD-121 cancel कर दो और ORD-122 की quantity 2 कर दो।",
+        "asr_text": null,
+        "agent_reply": "{\"tool_calls\": [{\"name\": \"cancel_order\", \"arguments\": {\"order_id\": \"ORD-121\"}}]}."
+      }
+    ],
+    "tool_calls": [],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-121",
+          "item": "Bedsheet",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-13"
+        },
+        {
+          "id": "ORD-122",
+          "item": "Pillow Cover",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-13"
+        },
+        {
+          "id": "ORD-123",
+          "item": "Curtain",
+          "seller": "Jaipur Prints",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "fail",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "fail",
+        "evidence": [
+          "final_state.orders.ORD-121.status",
+          "final_state.orders.ORD-122.quantity"
+        ],
+        "detail": "orders.ORD-121.status: expected 'cancelled', got 'placed'; orders.ORD-122.quantity: expected 2, got 1"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "fail",
+        "evidence": [
+          "expected.required_actions[0]",
+          "expected.required_actions[1]"
+        ],
+        "detail": "no successful call for: cancel_order {'order_id': 'ORD-121'}, update_quantity {'order_id': 'ORD-122', 'quantity': 2}"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": [
+      {
+        "category": "unclassified",
+        "stage": "unknown",
+        "evidence": [
+          "final_state.orders.ORD-121.status",
+          "final_state.orders.ORD-122.quantity",
+          "expected.required_actions[0]",
+          "expected.required_actions[1]"
+        ],
+        "method": "deterministic",
+        "confidence": "possible"
+      }
+    ]
+  }
+}

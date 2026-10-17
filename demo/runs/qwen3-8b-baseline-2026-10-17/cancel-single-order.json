@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "case_id": "cancel-single-order",
+  "run": {
+    "run_id": "5fca50a0935d469ca36d6c3a0eb474f5",
+    "case_id": "cancel-single-order",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8000/turn",
+        "timeout": 180.0
+      },
+      "seed": null
+    },
+    "started_at": "2026-10-17T06:49:16.940034Z",
+    "finished_at": "2026-10-17T06:49:20.468194Z",
+    "turns": [
+      {
+        "user_input": "Please cancel my order ORD-201.",
+        "asr_text": null,
+        "agent_reply": "Your order **ORD-201** for the Saree from Lakshmi Textiles has been successfully cancelled. Let me know if you need further assistance!"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "cancel_order",
+        "args": {
+          "order_id": "ORD-201"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-201",
+          "item": "Saree",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-14"
+        },
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-201",
+          "item": "Saree",
+          "seller": "Lakshmi Textiles",
+          "quantity": 1,
+          "status": "cancelled",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "pass",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "pass",
+        "evidence": [
+          "final_state.orders.ORD-201.status"
+        ],
+        "detail": "1 paths match"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls[0]"
+        ],
+        "detail": "1 succeeded"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": []
+  }
+}

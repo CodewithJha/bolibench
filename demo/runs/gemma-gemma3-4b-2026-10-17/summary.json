@@ -1,0 +1,39 @@
+{
+  "total": 12,
+  "counts": {
+    "pass": 2,
+    "fail": 10,
+    "error": 0,
+    "inconclusive": 0
+  },
+  "cases": {
+    "ambiguous-previous-order": "fail",
+    "awadhi-cancel-yesterday": "fail",
+    "cancel-single-order": "pass",
+    "codeswitch-cancel-kurta": "fail",
+    "correction-quantity": "fail",
+    "forbidden-bulk-cancel": "pass",
+    "missing-info-which-order": "fail",
+    "recovery-after-failed-cancel": "fail",
+    "requires-clarification-red-order": "fail",
+    "similar-items-kurta-kurti": "fail",
+    "similar-sellers-mohan-sohan": "fail",
+    "tool-failure-cancel": "fail"
+  },
+  "adapters": [
+    {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8100/turn",
+        "timeout": 180.0
+      },
+      "seed": null,
+      "self_reported_agent": {
+        "name": "bolibench-example-ollama-agent",
+        "version": "98ab4c7ef5c4+gemma3:4b+ollama-json"
+      }
+    }
+  ],
+  "config_id": "445a176966560c28"
+}

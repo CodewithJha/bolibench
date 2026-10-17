@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "case_id": "correction-quantity",
+  "run": {
+    "run_id": "9ef39acf545949a2a95401acabd5692c",
+    "case_id": "correction-quantity",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8000/turn",
+        "timeout": 180.0
+      },
+      "seed": null
+    },
+    "started_at": "2026-10-17T07:02:05.356175Z",
+    "finished_at": "2026-10-17T07:02:12.971862Z",
+    "turns": [
+      {
+        "user_input": "चूड़ियों वाले order की quantity 2 कर दो… नहीं नहीं, 3 कर दो।",
+        "asr_text": null,
+        "agent_reply": "Order ID ORD-501 की quantity 3 कर दी गई है। क्या आपको और कोई समायोजन करना होगा?"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_orders",
+        "args": {},
+        "status": "ok",
+        "result": [
+          {
+            "id": "ORD-501",
+            "item": "Glass Bangles",
+            "seller": "Firozabad Choodi Ghar",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-14"
+          },
+          {
+            "id": "ORD-502",
+            "item": "Bindi Pack",
+            "seller": "Firozabad Choodi Ghar",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-14"
+          }
+        ],
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "get_order",
+        "args": {
+          "order_id": "ORD-501"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "update_quantity",
+        "args": {
+          "quantity": 3,
+          "order_id": "ORD-501"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 3,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 3,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        {
+          "id": "ORD-502",
+          "item": "Bindi Pack",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "pass",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "pass",
+        "evidence": [
+          "final_state.orders.ORD-501.quantity",
+          "final_state.orders.ORD-502.quantity"
+        ],
+        "detail": "2 paths match"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls[2]"
+        ],
+        "detail": "1 succeeded"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": []
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "case_id": "correction-quantity",
+  "run": {
+    "run_id": "24f999920e7546c6973b907297f3e8ad",
+    "case_id": "correction-quantity",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8000/turn",
+        "timeout": 180.0
+      },
+      "seed": null
+    },
+    "started_at": "2026-10-17T06:49:45.304434Z",
+    "finished_at": "2026-10-17T06:49:57.058646Z",
+    "turns": [
+      {
+        "user_input": "चूड़ियों वाले order की quantity 2 कर दो… नहीं नहीं, 3 कर दो।",
+        "asr_text": null,
+        "agent_reply": "आपका ऑर्डर आईडी बताइए ताकि मैं आपकी मांग के अनुसार कार्य कर सकूं।"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "update_quantity",
+        "args": {
+          "quantity": 3,
+          "order_id": "चूड़ियों"
+        },
+        "status": "rejected",
+        "result": null,
+        "error": "no such order: चूड़ियों"
+      },
+      {
+        "turn": 0,
+        "tool": "ask_user",
+        "args": {
+          "kind": "clarify",
+          "question": "कृपया आपका ऑर्डर आईडी बताइए ताकि मैं आपकी मांग के अनुसार कार्य कर सकूं।"
+        },
+        "status": "ok",
+        "result": null,
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        {
+          "id": "ORD-502",
+          "item": "Bindi Pack",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "fail",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "fail",
+        "evidence": [
+          "final_state.orders.ORD-501.quantity"
+        ],
+        "detail": "orders.ORD-501.quantity: expected 3, got 1"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "fail",
+        "evidence": [
+          "expected.required_actions[0]"
+        ],
+        "detail": "no successful call for: update_quantity {'order_id': 'ORD-501', 'quantity': 3}"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "fail",
+        "evidence": [
+          "tool_calls[0]"
+        ],
+        "detail": "forbidden calls (incl. past max_attempts or outside exclusive_actions) made: update_quantity {'quantity': 3, 'order_id': 'चूड़ियों'} (rejected)"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": [
+      {
+        "category": "entity_resolution",
+        "stage": "understanding",
+        "evidence": [
+          "expected.required_actions[0]",
+          "tool_calls[0]"
+        ],
+        "method": "deterministic",
+        "confidence": "likely"
+      }
+    ]
+  }
+}

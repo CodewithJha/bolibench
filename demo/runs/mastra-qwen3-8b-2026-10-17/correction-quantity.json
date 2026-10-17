@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "case_id": "correction-quantity",
+  "run": {
+    "run_id": "f0f28e2357eb4e2e8f2d1405b498acea",
+    "case_id": "correction-quantity",
+    "adapter": {
+      "name": "webhook",
+      "version": "1",
+      "config": {
+        "agent_url": "http://127.0.0.1:8031/turn",
+        "timeout": 180.0
+      },
+      "seed": null,
+      "self_reported_agent": {
+        "name": "bolibench-mastra-agent",
+        "version": "0.1.0+qwen3:8b"
+      }
+    },
+    "started_at": "2026-10-17T16:39:50.361007Z",
+    "finished_at": "2026-10-17T16:40:59.130416Z",
+    "turns": [
+      {
+        "user_input": "चूड़ियों वाले order की quantity 2 कर दो… नहीं नहीं, 3 कर दो।",
+        "asr_text": null,
+        "agent_reply": "The quantity for your order \"ORD-501\" has been successfully updated to 3. Let me know if you need further assistance!"
+      }
+    ],
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_orders",
+        "args": {},
+        "status": "ok",
+        "result": [
+          {
+            "id": "ORD-501",
+            "item": "Glass Bangles",
+            "seller": "Firozabad Choodi Ghar",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-14"
+          },
+          {
+            "id": "ORD-502",
+            "item": "Bindi Pack",
+            "seller": "Firozabad Choodi Ghar",
+            "quantity": 1,
+            "status": "placed",
+            "placed_on": "2026-10-14"
+          }
+        ],
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "get_order",
+        "args": {
+          "order_id": "ORD-501"
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        "error": null
+      },
+      {
+        "turn": 0,
+        "tool": "update_quantity",
+        "args": {
+          "order_id": "ORD-501",
+          "quantity": 3
+        },
+        "status": "ok",
+        "result": {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 3,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        "error": null
+      }
+    ],
+    "final_state": {
+      "orders": [
+        {
+          "id": "ORD-501",
+          "item": "Glass Bangles",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 3,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        },
+        {
+          "id": "ORD-502",
+          "item": "Bindi Pack",
+          "seller": "Firozabad Choodi Ghar",
+          "quantity": 1,
+          "status": "placed",
+          "placed_on": "2026-10-14"
+        }
+      ]
+    },
+    "exposes_tool_calls": true,
+    "execution_error": null,
+    "refused_requests": []
+  },
+  "evaluation": {
+    "verdict": "pass",
+    "checks": [
+      {
+        "metric": "final_state",
+        "verdict": "pass",
+        "evidence": [
+          "final_state.orders.ORD-501.quantity",
+          "final_state.orders.ORD-502.quantity"
+        ],
+        "detail": "2 paths match"
+      },
+      {
+        "metric": "required_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls[2]"
+        ],
+        "detail": "1 succeeded"
+      },
+      {
+        "metric": "forbidden_actions",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls"
+        ],
+        "detail": "none attempted"
+      },
+      {
+        "metric": "ask_policy",
+        "verdict": "pass",
+        "evidence": [],
+        "detail": "asks precede actions"
+      },
+      {
+        "metric": "evidence",
+        "verdict": "pass",
+        "evidence": [
+          "tool_calls",
+          "final_state"
+        ],
+        "detail": "tool calls and state recorded"
+      }
+    ],
+    "classifications": []
+  }
+}
