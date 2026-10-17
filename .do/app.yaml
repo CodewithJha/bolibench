@@ -23,10 +23,13 @@ services:
       - key: AGENT_BASE_URL
         value: https://inference.do-ai.run/v1
         scope: RUN_TIME
-      # open-weight Gemma 4; verify tool calling with the probe in docs/deployment.md first,
-      # and add AGENT_TOOL_MODE=json if the model returns no tool_calls
+      # open-weight Gemma 4; DigitalOcean's model table does not list tool calling for it
       - key: AGENT_MODEL
         value: gemma-4-31B-it
+        scope: RUN_TIME
+      # prompt-based tool calls; try native only after the tool-calling probe in docs/deployment.md returns tool_calls
+      - key: AGENT_TOOL_MODE
+        value: json
         scope: RUN_TIME
       - key: AGENT_API_KEY_ENV  # the name of the variable holding the key, not the key
         value: MODEL_ACCESS_KEY
