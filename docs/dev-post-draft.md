@@ -1,9 +1,9 @@
 <!--
 DRAFT for the DEV post, following the official Side Hustle template
 (https://dev.to/challenges/hacktoberfest-week2-2026-10-12).
-Every number below comes from docs/audits/, docs/integrations/mastra.md or demo/runs/*/summary.json.
-Replace or delete every TODO before publishing; never fill one with an estimate.
-Category state: docs/sponsor-evidence-matrix.md.
+Every number below comes from docs/audits/, docs/integrations/mastra.md, demo/runs/*/summary.json or
+docs/live-verification-report.md. Replace or delete every TODO before publishing; never fill one with
+an estimate. Category state: docs/sponsor-evidence-matrix.md. Runbook: docs/submission-checklist.md.
 -->
 
 ---
@@ -52,16 +52,23 @@ TODO (only if true): first user, what they said, whether they'd pay. Otherwise d
 
 ## Demo
 
-TODO: live demo link (Render, and the .tech domain if claimed). The demo page compares every bundled
-run case by case, links each verdict to its full artifact, and lets anyone post a scripted agent to
-the real evaluator.
+**Live demo:** TODO Render URL (and the .tech domain only if claimed and serving it).
 
-TODO: 2–3 minute video: one `bolibench run`; the kurta/kurti artifact with the fluent reply next to
-the failed `final_state` check; the demo page; one Sentry trace; one speech-round-trip transcript.
+The page explains what BoliBench checks, then puts the 12 cases against five real runs side by side:
+every verdict links to its full artifact (transcript, every tool call, final state, each check). An
+integrations panel says, for each sponsor technology, how far it has actually been verified: local,
+hosted, or only against stubs. Anyone can post a scripted agent to the real evaluator, and a token
+holder can run a case live against an open-weight model hosted on DigitalOcean (TODO: keep only if
+live mode is on, with one result).
+
+**Video (2–3 min):** TODO link. The kurta/kurti failure, the demo page, a run comparison, one artifact
+explained, the integrations panel.
 
 ## Code
 
-TODO: confirm pushed, then embed: `{% github CodewithJha/bolibench %}` (Apache-2.0).
+{% github CodewithJha/bolibench %}
+
+Apache-2.0.
 
 ```sh
 uv sync
@@ -126,12 +133,24 @@ and the parser stays strict on purpose: in production, an almost-JSON call does 
 *Mastra:* the framework agent's per-case verdicts matched the Python v2 run exactly. With one run
 each, that's a coincidence worth noting, not proof the two behave the same.
 
-The local Gemma evaluation is `gemma3:4b` only (2/12, JSON tool mode). Gemma 4 appears only as the
-hosted DigitalOcean model `gemma-4-31B-it` in the deploy config; its tool calling is unverified.
+The local Gemma evaluation is `gemma3:4b` (2/12, JSON tool mode). Gemma 4 (`gemma-4-31B-it`) is the
+hosted model behind the demo's live mode on DigitalOcean. DigitalOcean doesn't list tool calling for
+it, so it runs in the same JSON tool mode. TODO: its smoke and suite counts, or delete these two
+sentences.
 
-Full per-case audits are in the repo: `docs/audits/qwen3-8b-baseline-2026-10-17.md`,
-`docs/audits/qwen3-8b-agent-v2-2026-10-17.md`, `docs/audits/gemma-gemma3-4b-2026-10-17.md`,
-`docs/integrations/mastra.md`. (TODO: make these links.)
+**Can the runs be repeated?** A day later I reran three of Gemma's cases and two of Mastra's, with
+the same model digests and agent files. Every verdict, every tool call (tool, arguments, status) and
+every final state came out the same as in the bundled runs; only the wording of the replies changed.
+That's five cases, not a reproducibility study, but it means the bundled artifacts are what these
+agents actually do, not a lucky draw.
+
+Full per-case audits are in the repo:
+[v1 baseline](https://github.com/CodewithJha/bolibench/blob/master/docs/audits/qwen3-8b-baseline-2026-10-17.md),
+[v2](https://github.com/CodewithJha/bolibench/blob/master/docs/audits/qwen3-8b-agent-v2-2026-10-17.md),
+[Gemma](https://github.com/CodewithJha/bolibench/blob/master/docs/audits/gemma-gemma3-4b-2026-10-17.md),
+[Mastra](https://github.com/CodewithJha/bolibench/blob/master/docs/integrations/mastra.md), and every
+integration check, with commands and results, in the
+[verification report](https://github.com/CodewithJha/bolibench/blob/master/docs/live-verification-report.md).
 
 **Caveats, from the audits**
 
@@ -144,25 +163,42 @@ Full per-case audits are in the repo: `docs/audits/qwen3-8b-baseline-2026-10-17.
 - No case has been reviewed by a native speaker yet, so every language-related diagnosis is low
   confidence.
 
-**Sponsor integrations.** TODO: keep only the ones with evidence by publishing time, one or two
-sentences each plus the screenshot or link.
+**Sponsor integrations, and how far each is verified.** I held the integrations to the same rule as
+the agents: a claim needs a recorded run. Each one below says whether it ran against the real hosted
+service, against the sponsor's software on my laptop, or only against stubs.
 
-- TODO Sentry: the agent emits `gen_ai.invoke_agent`, `gen_ai.chat` and `gen_ai.execute_tool` spans
-  with token counts, grouped per case as a Sentry Conversation; prompts and replies are only sent if
-  you opt in. Trace screenshot, latency and tokens per turn, cost ($0: the model is local), and one
-  thing a trace helped debug.
-- TODO ElevenLabs: `bolibench run --speech elevenlabs` speaks each utterance with TTS, transcribes it
-  with STT, and gives the agent only the transcript (stored as `asr_text`). Real numbers: how many
+- **Mastra:** `examples/mastra-agent`, a TypeScript agent built on `@mastra/core`, orchestrates
+  `qwen3:8b` through BoliBench's tool gateway. Full suite above; it also rejects malformed requests
+  (400, 413, 404, 409) without falling over.
+- **Temporal:** `python -m bolibench.temporal_run` runs a suite as a Temporal workflow, one activity
+  per case. On the local dev server, its summary was byte-identical to a plain `bolibench run`. I
+  `kill -9`'d the worker in the middle of a case and restarted it: Temporal re-ran that case (attempt
+  2) and the run completed. Starting the same workflow again re-ran nothing. This makes the
+  *evaluation* durable. The agent itself isn't a workflow, and the crash test used a deliberately slow
+  stub agent so the kill would land mid-case. TODO: UI screenshots.
+- TODO **Sentry Agent Tracing:** the agent emits `gen_ai.invoke_agent`, `gen_ai.chat` and
+  `gen_ai.execute_tool` spans with token counts, grouped per case as a Sentry Conversation. Prompts
+  and replies go to Sentry only if you opt in. While checking this against Sentry's docs, a test
+  caught a real leak: with the SDK's default local-variable capture, an error event from a failed
+  model call carried the customer's utterance and the `Authorization: Bearer` header with the API key.
+  The SDK's scrubber caught only a variable literally named `api_key`. The agent now turns local
+  variables off, and a test keeps them off. Trace screenshot, latency and tokens per turn, cost ($0:
+  the model is local), and one thing a trace helped debug.
+- TODO **ElevenLabs:** `bolibench run --speech elevenlabs` speaks each utterance with TTS, transcribes
+  it with STT, and gives the agent only the transcript (stored as `asr_text`). Real numbers: how many
   turns ASR changed, whether any verdict moved. Synthetic voices, not real speakers.
-- TODO Render/DigitalOcean: the demo container also runs the agent on an open-weight model served by
-  DigitalOcean serverless inference, so a token holder can run any case live. URL, one live result,
-  and whether that model's tool calling worked.
-- TODO MongoDB Atlas / Tiger Data: run artifacts exported for history; Tiger also stores
-  EmbeddingGemma embeddings of failures in pgvector for a keyword + vector "have we seen this failure
-  before?" search. Screenshots.
-- TODO Backboard: the same suite on two or more open-weight models through one Backboard key.
-- TODO Temporal: a suite run as a durable workflow that resumed after `kill -9` (this makes the
-  evaluation durable, not the agent).
+- TODO **Render + DigitalOcean:** the demo is one Docker container on Render. The image is 47 MB
+  compressed, runs as `nobody` on a read-only filesystem, and starts read-only with no configuration.
+  With a DigitalOcean key and a demo token, the same container also runs the example agent on an
+  open-weight model served by DigitalOcean's serverless inference, so a case can run live from the
+  page. URL, one live result, the DigitalOcean suite counts.
+- TODO **MongoDB Atlas / Tiger Data:** `bolibench export` sends run history to Atlas, or to Tiger as a
+  hypertable. Tiger also stores EmbeddingGemma embeddings of every failure in pgvector for a keyword +
+  vector "have we seen this failure before?" search. Rehearsed on local MongoDB 7 and TimescaleDB +
+  pgvector (22 failures indexed; the top matches for a failure were the same case in other runs).
+  Atlas and Tiger Cloud screenshots.
+- TODO **Backboard:** the same suite on two or more open-weight models through one Backboard key,
+  counts side by side.
 
 ## Why Does Open Innovation Matter?
 
@@ -200,13 +236,15 @@ the cases. That review hasn't happened yet, and it's the next thing BoliBench ne
 - **Transcript-level** unless the ElevenLabs speech round-trip is used, and that uses synthetic voices
   (TODO: keep this line only if the speech run happened).
 - **12 cases, single unseeded runs.** The counts are not model measurements.
+- **Integrations are verified only as far as stated.** Where a line above says local or stubs, the
+  hosted service hasn't been exercised.
 - The agent under test must run next to BoliBench (localhost only). That's a dev safeguard, not a
   security boundary.
 
 ## My Agent Session
 
-TODO (optional): Entire checkpoint link or DevRelay embed, only if captured and reviewed. Otherwise
-delete this section.
+TODO (optional): a DevRelay embed, only if captured and reviewed. Otherwise delete this section.
+(Entire checkpoints are kept private, so no Entire link.)
 
 ## My First User
 
@@ -214,25 +252,25 @@ TODO: delete this section unless a real person used it. Don't invent one.
 
 ## Prize Categories
 
-<!-- List only categories whose evidence is in this post at publishing time. -->
+<!-- List only categories whose evidence is in this post at publishing time. Delete every line
+whose "needs" step hasn't produced its evidence, and remove the "needs" notes from the rest. -->
 
-- Best Use of Gemma (local `gemma3:4b` run audited above, 2/12 in JSON tool mode; Gemma 4 only as
-  the hosted DigitalOcean `gemma-4-31B-it` in the deploy config, tool calling unverified)
-- Best Use of Mastra (full-suite run of the Mastra agent above)
+- Best Use of Gemma: `gemma3:4b` run audited above (2/12, JSON tool mode), plus EmbeddingGemma for
+  failure search. Ready.
+- Best Use of Mastra: the Mastra agent's full-suite run above. Ready.
+- Best Use of Temporal: the suite run as a durable workflow that resumed after `kill -9` (a durable
+  evaluation run). Needs: UI screenshots.
+- Best Use of Render: the live demo. Needs: the deploy, ideally with live mode on.
+- Best Use of DigitalOcean: the suite and the live demo on DigitalOcean serverless inference. Needs:
+  model access key, runs.
+- Best Use of Sentry Agent Tracing: traces above. Needs: DSN, traced run, screenshots.
+- Best Use of ElevenLabs: the speech round-trip run above. Needs: API key, speech run.
+- Best Use of MongoDB Atlas: run history in Atlas. Needs: Atlas cluster, export, screenshot.
+- Best Use of Tiger Data: pgvector failure search on Tiger Cloud. Needs: Tiger Cloud service,
+  export, screenshot.
+- Best Use of Backboard: two or more open-weight models through one key. Needs: key, two full runs.
+- Best Use of a .tech Domain: only if claimed through Hacktoberfest and serving the live demo.
 
-Conditional, add only once the evidence is in the post:
-
-- Best Use of Sentry Agent Tracing (trace screenshots)
-- Best Use of ElevenLabs (a live speech run)
-- Best Use of Render (deployed with live mode on)
-- Best Use of DigitalOcean (a run against DO serverless inference, or the App Platform URL)
-- Best Use of a .tech Domain (claimed through Hacktoberfest, serving the demo)
-- Best Use of MongoDB Atlas (export screenshot)
-- Best Use of Tiger Data (pgvector export and similar-failure search on a real service)
-- Best Use of Backboard (full-suite runs of two or more models)
-- Best Use of Entire (a public session link)
-- Best Use of Temporal (UI screenshots; describe it as a durable evaluation run)
-
-Not entered: GitHub Copilot, Tinker, TabPFN, SerpApi, Arduino.
+Not entered: Entire, GitHub Copilot, Tinker, TabPFN, SerpApi, Arduino.
 
 <!-- Team Submissions: credit teammates' DEV usernames here if any. -->
