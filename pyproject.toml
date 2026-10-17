@@ -7,6 +7,13 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3"]
 
+[project.optional-dependencies]
+sentry = ["sentry-sdk>=2.64"]
+mongo = ["pymongo>=4.7,<5"]
+tiger = ["psycopg[binary]>=3.1,<4"]
+temporal = ["temporalio>=1.34"]
+all = ["bolibench[sentry,mongo,tiger,temporal]"]
+
 [project.scripts]
 bolibench = "bolibench.cli:main"
 
