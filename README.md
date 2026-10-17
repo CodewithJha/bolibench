@@ -10,7 +10,8 @@ and mid-utterance corrections in an order-management task.
 
 What it is and is not:
 
-- Transcript-level only. Cases are text. There is no audio and no ASR.
+- Transcript-level by default. Cases are text. An optional speech round-trip (`run --speech elevenlabs`)
+  gives the agent the speech-to-text transcript of synthetic text-to-speech audio, not real speakers.
 - Tool execution is observed by the sandbox, not taken from the agent's own account.
 - The scripted fake adapter is a test harness, not an AI agent; its results say nothing about any AI system.
 - Nothing in BoliBench understands Hindi or Awadhi. Case correctness rests on their human authors.
@@ -21,7 +22,8 @@ What it is and is not:
 Data models, an in-memory order sandbox, deterministic checks with failure classification, a JSON
 case loader, `bolibench validate`, `bolibench review-sheet`, `bolibench run` with per-case JSON
 artifacts and a `summary.json`, a scripted fake adapter, and a localhost webhook adapter for external
-agents. No reports or scores beyond verdict counts.
+agents. No reports or scores beyond verdict counts. Optional integrations (speech round-trip, demo
+server, database export, durable runs) are listed under "Optional integrations".
 
 ## Setup
 
@@ -42,7 +44,9 @@ uv run bolibench review-sheet suites/orders
 - `webhook.py`: `WebhookAgentAdapter` and its local tool gateway.
 - `runner.py`: `run_case(case, adapter) -> RunRecord`, plus artifact writing.
 - `evaluate.py`: `evaluate(case, run) -> Evaluation`, deterministic checks and classification.
-- `cli.py`: `validate` and `run`.
+- `cli.py`: `validate`, `review-sheet`, `run`, `export`, `serve`.
+- Optional, see "Optional integrations": `speech.py` (TTS -> STT wrapper), `server.py` (public demo),
+  `export.py`/`export_mongo.py`/`export_tiger.py` (database export), `temporal_run.py` (durable runs).
 
 ## Cases
 
@@ -142,8 +146,9 @@ escaped), produced by pydantic's `model_dump_json(indent=2)`:
 {
   "schema_version": 1,
   "case_id": "...",
-  "run": {"run_id", "case_id", "adapter": {name, version, config, seed}, "started_at", "finished_at",
-          "turns": [{user_input, asr_text, agent_reply}],
+  "run": {"run_id", "case_id", "adapter": {name, version, config, seed, self_reported_agent?},
+          "started_at", "finished_at",
+          "turns": [{user_input, asr_text, agent_reply, speech?}],
           "tool_calls": [{turn, tool, args, status, result, error}],
           "final_state", "exposes_tool_calls", "execution_error",
           "refused_requests": [{status, reason, tool, token_turn, token_age_s}]},
@@ -154,8 +159,20 @@ escaped), produced by pydantic's `model_dump_json(indent=2)`:
 
 `summary.json` is computed from the artifacts just written: `total`, `counts` per verdict (`pass`,
 `fail`, `error`, `inconclusive`), `cases` (id to verdict), the distinct `adapters` infos, and
-`config_id`, a sha256 prefix of those infos (agent URL or script path, timeout). Counts only; no
-scores or statistics. The case id `summary` is reserved.
+`config_id`, a sha256 prefix of those infos: adapter name and version, config (agent URL or script
+path, timeout), seed, and the agent's self-reported identity when present. Counts only; no scores or
+statistics. The case id `summary` is reserved.
+
+`asr_text` is `null` unless the run used `--speech`; then it is the transcript the agent acted on, and
+`speech` holds that turn's round-trip evidence (transcript, detected language, audio size and sha256,
+TTS/STT durations). `speech` is omitted when absent, so text-only artifacts are unchanged.
+
+`adapter.self_reported_agent` (`{name, version}`) is only present when a webhook agent reported an
+identity (see "Turn response"). It is the agent's own claim, not verified, and never used by the
+evaluator. The key is omitted when absent, so artifacts and `config_id` of runs without it are
+unchanged; `schema_version` stays 1 (an older BoliBench rejects the extra key rather than misreading
+it). So two runs of different agent code behind the same URL share a `config_id` unless the agent
+reports its version.
 
 ### Exit codes
 
@@ -206,8 +223,14 @@ Tool calls: during the turn the agent POSTs `{"tool": "...", "args": {...}}` to 
 the agent. Calls are serialized under a lock and recorded in arrival order. The token is random and
 new for every turn; it only scopes calls to the active turn.
 
-Turn response: the agent answers the turn POST with exactly `{"reply": "..."}`. The reply is stored
-as the transcript and never used as evidence; any claims in it about tools are ignored.
+Turn response: the agent answers the turn POST with `{"reply": "..."}` and optionally
+`"agent": {"name": "...", "version": "..."}` (printable ASCII; name at most 64 and version at most
+128 characters; no other keys). The reply is stored as the transcript and never used as evidence; any
+claims in it about tools are ignored. The identity reported on turn 0 is recorded as the case's
+`adapter.self_reported_agent` and enters `config_id`. A malformed identity is a bad reply, and an
+identity that differs on a later turn of the same case (including appearing or disappearing) is an
+`AdapterError`; both make the case `error`, since the case could not be attributed to one agent.
+Different cases of one run may report different identities; `summary.json` lists each.
 
 Lifecycle and attribution:
 
@@ -261,8 +284,9 @@ Ollama model using Ollama's tool calling, and executes tools only through `tools
 part of the package; only its offline turn-ending logic is tested. Since the baseline it is v2:
 `ask_user` ends the turn (later tool calls in that model message are dropped), the prompt says to
 look orders up instead of guessing ids and to retry a temporary failure once, and `context` is
-stated in full sentences. The baseline's v1 is the file at commit `424145d` (sha256 `4b68d382…`);
-a single v2 run is audited in `docs/audits/qwen3-8b-agent-v2-2026-10-17.md`.
+stated in full sentences. The baseline's v1 is the file at commit `1a91e20` (sha256 `4b68d382…`);
+a single v2 run is audited in `docs/audits/qwen3-8b-agent-v2-2026-10-17.md`. The agent now reports
+`{"name": "bolibench-example-ollama-agent", "version": "<sha256[:12] of its file>+<model>"}`.
 
 ```sh
 ollama serve                                         # model already pulled, e.g. qwen3:8b
@@ -293,9 +317,43 @@ single run with full artifacts and a per-case audit is in `docs/audits/qwen3-8b-
 - One tool call gets one classification: a forbidden attempt that was rejected or hit an injected
   failure is classified as the forbidden action, not also as `tool_execution`/`recovery_failure`.
 
+## Optional integrations
+
+None is needed for the benchmark itself; the core install depends on pydantic only. Each is explicit
+(nothing runs unless you invoke it) and documented, with its status, in its own file. Index and the
+full environment-variable inventory: `docs/integrations.md`; placeholders in `.env.example`.
+
+```sh
+uv sync --extra sentry      # or mongo, tiger, temporal, all
+# speech round-trip: synthetic audio via ElevenLabs TTS -> STT; the agent hears the transcript
+uv run bolibench run suites/orders --agent-url http://127.0.0.1:8000/turn \
+  --speech elevenlabs --speech-audio-dir audio-cache
+uv run bolibench export --to mongo --dry-run runs/<run dir>   # or --to tiger; `--to mongo --help`
+uv run bolibench serve                                       # public demo on http://127.0.0.1:8080
+```
+
+- ElevenLabs speech round-trip (`run --speech elevenlabs`, stdlib only): offline-tested against fakes
+  and a local stub; no live call yet. `docs/integrations/elevenlabs.md`
+- Public demo and token-gated live runs (`bolibench serve`, Docker, Render, DigitalOcean App
+  Platform): offline-tested; not deployed yet. `docs/deployment.md`
+- MongoDB Atlas export (`export --to mongo`, extra `mongo`): offline-tested with dry runs and fakes;
+  opt-in live test, not run here. `docs/integrations/mongodb-atlas.md`
+- Tiger Data export with similar-failure search (`export --to tiger`, extra `tiger`): offline-tested;
+  opt-in live test, not run here. `docs/integrations/tiger-data.md`
+- Temporal durable runs (`python -m bolibench.temporal_run`, extra `temporal`): tested on temporalio's
+  local test server; not run against Temporal Cloud. `docs/integrations/temporal.md`
+- Example agent on OpenAI-compatible endpoints (DigitalOcean Gemma) with Sentry tracing (extra
+  `sentry`): offline-tested; no live DSN or hosted endpoint used yet. One local `gemma3:4b` run is
+  audited in `docs/audits/gemma-gemma3-4b-2026-10-17.md`. `docs/integrations/gemma-sentry.md`
+- Mastra framework agent (`examples/mastra-agent`, TypeScript): offline `npm test`, plus one real
+  full-suite run with local `qwen3:8b` (6 pass, 6 fail). `docs/integrations/mastra.md`
+- Backboard bridge (`examples/backboard_agent.py`): tested offline against a stub only.
+  `docs/integrations/backboard.md`
+
 ## Known limitations
 
-- Transcript mode only: no audio, no ASR, and no speech-recognition failure classification.
+- Transcript-level by default. The optional speech round-trip uses synthetic TTS audio (no real
+  speakers, noise or phone codecs), and there is no speech-recognition failure classification yet.
 - No adapter for a hosted model or voice platform; the webhook adapter needs you to run the agent
   locally. The fake adapter is a scripted harness and says nothing about any AI system.
 - Only the two injected-failure cases set `max_attempts`, so elsewhere a repeated attempt of the
