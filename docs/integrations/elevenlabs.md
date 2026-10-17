@@ -10,8 +10,10 @@ The inner adapter (webhook, scripted, or any `AgentAdapter`) only ever receives 
 evaluator does not change: it still judges the sandbox-observed tool calls and final state, and it
 does not depend on which provider made the audio or transcript.
 
-Status: tested offline only, against fakes and a local HTTP stub. **No live ElevenLabs call has been
-made yet.** See "Live verification" below.
+Status: tested offline only, against fakes and a local HTTP stub that answers in the documented
+request/response shapes, including a full `bolibench run --speech elevenlabs` through that stub (as a
+test, and by hand as a separate process on 2026-10-18). **No live ElevenLabs call has been made yet.**
+See "Live verification" below.
 
 ## What it measures, and what it doesn't
 
@@ -46,10 +48,16 @@ It does not measure:
   host). Timeouts are bounded (TTS 30 s, STT 60 s by default) and responses have size limits (5 MiB of
   audio, 1 MiB of JSON).
 - Any HTTP or network failure raises an `AdapterError`, such as `elevenlabs stt HTTP 429: Too many
-  requests`. The runner then gives the case an `error` verdict, never `fail`. A provider outage is
-  therefore never counted against the agent.
-- An empty transcript (silence) is passed through as-is. A transcript that differs from the utterance
-  is also passed through unchanged.
+  requests`. The reason is the error's `detail.message` (or the first `detail[].msg` of a 422
+  validation error), cut to 200 characters; never the key. The runner then gives the case an `error`
+  verdict, never `fail`. A provider outage is therefore never counted against the agent.
+- An empty transcript (silence, or audio STT could not read) is passed to the agent as an empty
+  utterance, not raised as an error. It is a speech round-trip result: the case will usually `fail`,
+  and the artifact shows `asr_text: ""` next to the original text, so the cause is visible. A
+  transcript that differs from the utterance is also passed through unchanged.
+- `ElevenLabsTTS` and `ElevenLabsSTT` keep the key out of `repr`. `bolibench.speech` is imported only
+  when `--speech` is given, so text-only runs never load it or read `ELEVENLABS_*` (tested in a fresh
+  interpreter).
 
 ### Evidence per turn
 
@@ -77,7 +85,8 @@ With `audio_dir` (`--speech-audio-dir`), each turn's audio is saved as
 `<sha256(tts config, text)>.mp3`. If that file already exists, it is reused instead of calling TTS.
 Reruns therefore hear byte-identical audio, and TTS isn't billed again. A different voice, model,
 format or seed gives a different key. STT still runs every time. To get fresh audio, use a new
-directory. Files are written atomically.
+directory. Files are written atomically (a temp file renamed into place, removed if the write fails),
+and file names are hashes, so no utterance or id becomes part of a path.
 
 ## Setup
 
@@ -95,7 +104,7 @@ directory. Files are written atomically.
 | `ELEVENLABS_TTS_MODEL` | no | `eleven_multilingual_v2` | TTS model id. |
 | `ELEVENLABS_STT_MODEL` | no | `scribe_v2` | STT model id. |
 | `ELEVENLABS_STT_LANGUAGE` | no | unset (auto-detect) | Language hint for STT, e.g. `hin`. Auto-detect is the fairer test for code-switching. |
-| `ELEVENLABS_BASE_URL` | no | `https://api.elevenlabs.io` | E.g. `https://api.in.residency.elevenlabs.io` for India data residency. Must be https. |
+| `ELEVENLABS_BASE_URL` | no | `https://api.elevenlabs.io` | Documented alternatives: `https://api.us.elevenlabs.io`, and data residency `https://api.{eu,in,sg}.residency.elevenlabs.io` (e.g. `in` for India). Must be https. |
 
 The whole config is checked before any network call: a missing key or voice, a malformed id, a
 non-https base URL or a non-positive timeout. Through the CLI, any of these is an input error (exit
@@ -141,30 +150,68 @@ text-only run.
 
 ## Live verification (not yet done)
 
-1. Export `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in your shell.
-2. Run `BOLIBENCH_LIVE=1 uv run pytest -q -s tests/test_speech.py -k live`. This makes one TTS call and
-   one STT call on `awadhi-cancel-yesterday` and prints the utterance, transcript and detected
-   language. It is skipped unless the key, the voice id and `BOLIBENCH_LIVE=1` are all set.
-3. Run one case with
-   `uv run bolibench run suites/orders/ambiguous-previous-order.json --scripts examples/scripts/ambiguous-previous-order.json --speech elevenlabs --speech-audio-dir audio-cache`.
-   Check three things: `turns[].asr_text` is filled; the key appears
-   nowhere in the output, the artifact or `audio-cache/` (`rg "$ELEVENLABS_API_KEY" runs audio-cache`
-   should find nothing); and a second run makes no TTS calls (no new files in `audio-cache/`, and
-   `turns[].speech.tts_s` is null).
-4. Listen to the saved `.mp3` files for the Awadhi cases and write down what you hear.
+Cost of the whole procedure: under 200 TTS characters and well under a minute of STT audio.
 
-Unverified assumptions to confirm in that first live run:
+1. Set the key and voice without writing them to shell history or files:
 
-- STT accepts the multipart upload sent as `speech.mp3` / `audio/mpeg`.
-- With `tag_audio_events=false`, `text` contains only the spoken words.
+   ```bash
+   read -rs ELEVENLABS_API_KEY && export ELEVENLABS_API_KEY
+   export ELEVENLABS_VOICE_ID=<voice id from https://elevenlabs.io/app/voice-library>
+   ```
+
+2. One TTS and one STT call, through the real clients:
+
+   ```bash
+   BOLIBENCH_LIVE=1 uv run pytest -q -s tests/test_speech.py -k live
+   ```
+
+   Expected: `1 passed`, and three printed lines: `utterance:` (the Awadhi case text), `transcript:`
+   (non-empty, mostly Devanagari) and `language:` (likely `hin`, with a probability). It is skipped
+   unless the key, the voice id and `BOLIBENCH_LIVE=1` are all set. A `401` means a bad key, `402`
+   no credits, `404 voice_not_found` a bad voice id.
+
+3. The CLI path, twice, into a scratch directory:
+
+   ```bash
+   for n in 1 2; do
+     uv run bolibench run suites/orders/ambiguous-previous-order.json \
+       --scripts examples/scripts/ambiguous-previous-order.json \
+       --speech elevenlabs --speech-audio-dir /tmp/bb-audio --output /tmp/bb-speech-$n
+   done
+   ```
+
+   Expected, each run: `speech: elevenlabs TTS -> STT ...`, then `pass  ambiguous-previous-order`
+   and exit code 0. The first run writes two `.mp3` files to `/tmp/bb-audio`; the second writes none.
+   Check:
+
+   ```bash
+   python3 -c "import json,glob; [print(n, [(t['asr_text'], t['speech']['tts_s']) for t in json.load(open(f))['run']['turns']]) for n in (1, 2) for f in glob.glob(f'/tmp/bb-speech-{n}/*/ambiguous-previous-order.json')]"
+   rg -l --fixed-strings "$ELEVENLABS_API_KEY" /tmp/bb-speech-1 /tmp/bb-speech-2 /tmp/bb-audio || echo "key not in outputs"
+   ```
+
+   Run 1 shows the transcripts with a number for `tts_s`. Run 2 shows `tts_s` `None`, because the
+   audio was reused. The `rg` must print `key not in outputs`.
+
+4. Listen to `/tmp/bb-audio/*.mp3`, and to the Awadhi case's audio if you run it, and write down what
+   you hear.
+
+Evidence to keep for the write-up: the terminal output of steps 2 and 3, a screenshot of the
+ElevenLabs dashboard's usage view showing the characters and STT time used that day, and the transcript next to the utterance from one artifact. Don't screenshot the
+API keys page.
+
+What only a live run can confirm (the stub follows the docs, but it isn't ElevenLabs):
+
+- STT accepts the multipart upload sent as `speech.mp3` / `audio/mpeg`, and with
+  `tag_audio_events=false` `text` holds only the spoken words.
 - The TTS endpoint accepts `eleven_multilingual_v2` without `language_code`. The docs say that model
   does not support `language_code`, so none is sent.
+- Error bodies have the documented `detail` shape (the reason in `AdapterError` comes from it).
 
 ## Key rotation
 
-1. Create a new key in the ElevenLabs dashboard.
+1. Create a new key in the ElevenLabs dashboard (<https://elevenlabs.io/app/settings/api-keys>).
 2. Replace `ELEVENLABS_API_KEY` in your shell or secret store.
-3. Delete the old key.
+3. Run step 2 of "Live verification" with the new key, then delete the old key.
 
 Keys are read from the environment on every run and are never stored or cached by BoliBench, and
 cached audio files don't depend on the key. If a key may have leaked, delete it in the dashboard
@@ -183,11 +230,11 @@ first. A credit quota on the key limits the damage.
 - The evaluator does not yet attribute a failure to `speech_recognition` when `asr_text` differs from
   the utterance. Until it does, compare the two by hand.
 
-## Sources (fetched 2026-10-17)
+## Sources (fetched 2026-10-17, rechecked 2026-10-18)
 
-- Text to speech: <https://elevenlabs.io/docs/api-reference/text-to-speech/convert>. `POST /v1/text-to-speech/{voice_id}` with a JSON body (`text`, `model_id`, optional `seed`) and an `output_format` query parameter (default `mp3_44100_128`). The response is the audio.
-- Speech to text: <https://elevenlabs.io/docs/api-reference/speech-to-text/convert>. `POST /v1/speech-to-text` as multipart: required `model_id`, `file`, optional `language_code` (ISO 639-1 or 639-3; null means auto-detect) and `tag_audio_events`. The response has `text`, `language_code`, `language_probability` and `words`.
-- Models: <https://elevenlabs.io/docs/overview/models>. `eleven_multilingual_v2` lists `hi` and accepts up to 10,000 characters per request. Scribe v2 supports 90+ languages.
-- STT overview: <https://elevenlabs.io/docs/overview/capabilities/speech-to-text>. Hindi is in the "High Accuracy (>5% to ≤10% WER)" tier. Awadhi is not listed. Files up to 3 GB.
+- Text to speech: <https://elevenlabs.io/docs/api-reference/text-to-speech/convert>. `POST /v1/text-to-speech/{voice_id}` with a JSON body (`text`, `model_id` defaulting to `eleven_multilingual_v2`, optional `seed` 0 to 4294967295) and an `output_format` query parameter (default `mp3_44100_128`; the mp3 values are `mp3_22050_32`, `mp3_24000_48` and `mp3_44100_{32,64,96,128,192}`). The response is the audio. Servers: `api.elevenlabs.io`, `api.us.elevenlabs.io`, `api.{eu,in,sg}.residency.elevenlabs.io`.
+- Speech to text: <https://elevenlabs.io/docs/api-reference/speech-to-text/convert>. `POST /v1/speech-to-text` as multipart: required `model_id`, `file` (at least 100 ms, under 5 GB), optional `language_code` (ISO 639-1 or 639-3; null means auto-detect) and `tag_audio_events`. The 200 response has `text`, `language_code`, `language_probability` and `words`. A 202 (`webhook=true`) or a per-channel `transcripts` shape (`use_multi_channel`) only happen for options BoliBench never sends.
+- Models: <https://elevenlabs.io/docs/overview/models>. `eleven_multilingual_v2` lists `hi` and accepts up to 10,000 characters per request. `scribe_v2` is the current STT model; `scribe_v1` is listed as deprecated (replacement `scribe_v2`). `eleven_v3` and `eleven_v4` also exist and can be chosen with `ELEVENLABS_TTS_MODEL`.
+- STT overview: <https://elevenlabs.io/docs/overview/capabilities/speech-to-text>. Hindi is in the "High Accuracy (>5% to ≤10% WER)" tier. Awadhi is not listed.
 - Authentication: <https://elevenlabs.io/docs/api-reference/authentication>. The `xi-api-key` header, plus key scopes, quotas and IP allowlists.
-- Errors: <https://elevenlabs.io/docs/eleven-api/resources/errors.md>. JSON `detail` with `type`, `code` and `message`. 401 is authentication, 429 is rate or concurrency limit, 5xx is a server error.
+- Errors: <https://elevenlabs.io/docs/eleven-api/resources/errors.md>. JSON `detail` with `type`, `code` and `message` (422 validation errors in the API reference are a list of `{loc, msg, type}`). 401 is authentication, 402 insufficient credits, 429 rate or concurrency limit, 5xx a server error.

@@ -9,14 +9,22 @@ One container, two processes, started by `deploy/start.sh`:
   BoliBench runs one suite case through it with the regular webhook adapter: the agent's tool calls go
   through BoliBench's gateway into its sandbox, and the evaluator judges the recorded calls and final state.
 
-Nothing here is deployed yet and no domain is registered; these are the steps.
+Nothing here is deployed yet and no domain is registered; these are the steps. Render is the primary
+target (Render credits cover the web service; DigitalOcean is used for model inference). The
+DigitalOcean App Platform spec is an optional alternative: maintaining both is not required.
+
+Checked locally on 2026-10-18: `docker build` then `docker run --read-only -p 10000:10000 -e PORT=10000`
+with no other configuration starts as `nobody` (uid 65534) with live mode off, and every endpoint below
+answers; the image is about 218 MB unpacked (47 MB compressed). `render blueprints validate render.yaml`
+(Render CLI 2.28) reports it valid.
 
 ## What it serves
 
 | Endpoint | What |
 |---|---|
-| `GET /` | HTML page: per-case comparison of the bundled runs (verdict + failure classifications, each linked to its artifact), a form that posts a script to `/api/evaluate`, and the live section (status, token form, recent live runs). No external JS or CSS |
+| `GET /` | HTML page: what BoliBench evaluates, the cases (id, tags, first user turn) against the bundled runs (verdict + failure classifications, each linked to its artifact, pass totals per run), the integrations panel, a form that posts a script to `/api/evaluate`, and the live section (status, token form, recent live runs). No external JS or CSS |
 | `GET /health` | `{"status": "ok", "cases": N, "runs": N, "live": bool}` |
+| `GET /api/integrations` | `demo/integrations.json`, as validated at startup (see below) |
 | `GET /api/cases` | Every suite case, whole: turns, context, `initial_state` and `expected`. The benchmark is open source, so the gold expectations are already public; a script author needs the order ids anyway |
 | `GET /api/runs` | Bundled runs: label, source dir, date, model, agent identity/hash, note, plus `config_id`, `total`, `counts`, per-case verdicts and adapter infos from each run's `summary.json` |
 | `GET /api/runs/<label>/<case_id>` | One artifact (`{schema_version, case_id, run, evaluation}`), as bundled |
@@ -31,6 +39,23 @@ reads a file (path traversal has nothing to reach). If a bundled file is inconsi
 matching `summary.json`, a schema change) the server refuses to start. Absolute paths in bundled JSON
 (a string value that is an absolute path, e.g. a scripted run's `config.script`) are replaced by
 their file name in the response; the bundled files themselves are verbatim copies.
+
+### `demo/integrations.json`
+
+The integrations panel and `GET /api/integrations` come from this static file, hand-maintained:
+
+```json
+{"as_of": "2026-10-18", "integrations": [
+  {"name": "Mastra agent", "category": "agent framework", "status": "live-verified (local)",
+   "evidence": "demo/runs/mastra-qwen3-8b-2026-10-17, docs/integrations/mastra.md", "note": "..."}]}
+```
+
+`status` is the highest level actually reached, one of `not verified`, `implemented` (code in the
+repo), `offline-tested` (tests against fakes, stubs or local test servers), `live-verified (local)`,
+`live-verified (hosted)` ("live" = a real call to the service or a real run of the model). Raise it
+only with evidence in the repo, name that evidence (repo-relative paths) in `evidence`, and bump
+`as_of`. Any other status or a missing/extra field stops the server at startup;
+`uv run pytest -q tests/test_server.py` checks the file.
 
 Live results are honest: an agent that is down, times out or replies badly gives an `error` verdict,
 a wrong action a `fail`; every run is listed, whatever its verdict. Live mode off means the endpoint
@@ -64,7 +89,7 @@ BOLIBENCH_DEMO_TOKEN=$(openssl rand -hex 24) BOLIBENCH_LIVE_AGENT_URL=http://127
 | `AGENT_MODEL` | unset (`gemma-4-31B-it` in both platform configs) | Live: model id (`--model`) |
 | `AGENT_API_KEY_ENV` | unset | Live: the *name* of the variable that holds the key, e.g. `MODEL_ACCESS_KEY` (`--api-key-env`) |
 | `MODEL_ACCESS_KEY` (or the name above) | unset | Live, secret: the model access key. Only the agent process sees it |
-| `AGENT_TOOL_MODE` | `native` | Live: `json` for a model without tool calling (`--tool-mode`) |
+| `AGENT_TOOL_MODE` | `native` (`json` in both platform configs) | Live: `json` for a model without tool calling (`--tool-mode`). DigitalOcean's model table does not list tool calling for `gemma-4-31B-it`, so the configs use `json`; set `native` only if the probe below returns `tool_calls` |
 | `BOLIBENCH_DEMO_TOKEN` | unset | Live, secret: bearer token for `POST /api/live-run`, at least 16 characters. Only the server process sees it |
 | `BOLIBENCH_LIVE_DAILY_CAP` | `50` | Live runs per UTC day, whole server |
 | `BOLIBENCH_LIVE_TURN_TIMEOUT` | `40` | Seconds per turn. Cases have at most 2 turns, keeping a run under the ~100 s request limit of the platforms' proxies |
@@ -72,6 +97,13 @@ BOLIBENCH_DEMO_TOKEN=$(openssl rand -hex 24) BOLIBENCH_LIVE_AGENT_URL=http://127
 
 Live mode is on only when `start.sh` started the agent (the three `AGENT_*` variables set and the key
 non-empty) and `BOLIBENCH_DEMO_TOKEN` is set. Without them the demo runs read-only and says so.
+
+Startup: an empty value counts as unset, so secrets left blank on the platform give a read-only demo.
+A value that is set but invalid stops the server with `bolibench demo: invalid configuration: ...`
+(exit 1, so the platform's deploy fails instead of serving a half-configured demo): a non-numeric or
+non-positive `BOLIBENCH_LIVE_DAILY_CAP`, a `BOLIBENCH_LIVE_TURN_TIMEOUT` outside 0-600 s, a
+`BOLIBENCH_DEMO_TOKEN` under 16 characters (even while live mode would be off), a non-local agent
+URL, or an inconsistent `demo/` bundle. The server writes no files (the image runs with `--read-only`).
 
 ## Live mode: a DigitalOcean serverless inference model
 
@@ -96,36 +128,66 @@ DigitalOcean's serverless inference serves open-weight models behind an OpenAI-c
      "tools": [{"type": "function", "function": {"name": "list_orders", "description": "List all orders.",
        "parameters": {"type": "object", "properties": {}, "required": []}}}]}' | python3 -m json.tool | grep -A3 tool_calls
    ```
-   No `tool_calls` in the answer: set `AGENT_TOOL_MODE=json` (or pick another model, e.g. `openai-gpt-oss-120b`).
+   No `tool_calls` in the answer: keep the configs' `AGENT_TOOL_MODE=json` (or pick another model, e.g.
+   `openai-gpt-oss-120b`). With `tool_calls`, `AGENT_TOOL_MODE=native` can be tried.
 4. Set the variables on the platform (below): `AGENT_BASE_URL`, `AGENT_MODEL`, `AGENT_API_KEY_ENV=MODEL_ACCESS_KEY`,
    and the secrets `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN` (`openssl rand -hex 24`).
 
 Each live run costs model tokens on your DigitalOcean account; `BOLIBENCH_LIVE_DAILY_CAP` bounds how
 many runs a day the token holders can start.
 
-## Render
+## Render (primary)
 
-`render.yaml` is a Blueprint: one Docker web service on the free plan, region Singapore, health check
-`/health`, auto-deploy on commit to `master`, live-mode settings for `gemma-4-31B-it` on
-DigitalOcean serverless inference, and the two secrets as `sync: false` (Render prompts for them).
+`render.yaml` is a Blueprint: one Docker web service (`runtime: docker`, `./Dockerfile`) on the free
+plan, region Singapore, branch `master`, health check `/health`, `autoDeployTrigger: commit`,
+live-mode settings for `gemma-4-31B-it` on DigitalOcean serverless inference, and the two secrets as
+`sync: false`. Fields checked against Render's Blueprint spec (https://render.com/docs/blueprint-spec)
+and `render blueprints validate`. Render sets `PORT=10000`; the image reads it.
 
-1. Push the repo (with `Dockerfile`, `deploy/start.sh`, `render.yaml`, `demo/`) to GitHub.
-2. Render Dashboard: New > Blueprint, pick the repo. When prompted, enter `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN` (leave either empty for a read-only demo). Apply.
-3. Wait for the deploy, then check `https://bolibench-demo.onrender.com` (Render shows the exact subdomain).
+Read-only demo first (no secrets needed):
 
-To change the model later: service > Environment > `AGENT_MODEL`, save (redeploys).
-The free plan spins the service down when idle; the first request afterwards takes a while.
+1. The repo is on GitHub (`CodewithJha/bolibench`, branch `master`, with `render.yaml` at the root).
+2. Render Dashboard: **New > Blueprint**, connect GitHub if asked, select `CodewithJha/bolibench`,
+   give the Blueprint a name.
+3. Render lists the `bolibench-demo` web service and prompts for the `sync: false` variables
+   `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN`. Leave both empty for the read-only demo.
+4. **Apply** (Deploy Blueprint). Wait for the build and the `/health` check to pass, then open the
+   `https://<service>.onrender.com` URL the service page shows (`bolibench-demo.onrender.com` if
+   the name is free) and run the checks under "Verify a deployment".
 
-## DigitalOcean App Platform
+Enable live mode later:
 
-`.do/app.yaml` builds the same `Dockerfile`: one `apps-s-1vcpu-0.5gb` instance (the smallest, $5/month,
-single instance only), `http_port` 8080, health check `/health`, deploy on push to `master`, and the
-same non-secret live settings. Secrets are not in the committed spec.
+1. Get a DigitalOcean model access key and run the tool-calling probe for `gemma-4-31B-it` (step 3 in
+   the live-mode section above). The Blueprint already sets `AGENT_TOOL_MODE=json`; change it to
+   `native` only if the probe returned `tool_calls`.
+2. Service > **Environment**: add `MODEL_ACCESS_KEY` (the key) and `BOLIBENCH_DEMO_TOKEN`
+   (`openssl rand -hex 24`). Render prompts for
+   `sync: false` values only when the Blueprint is first created, so later secrets go here. Save,
+   which redeploys.
+3. `curl -s https://<service>.onrender.com/health` shows `"live": true`; then the live curls below.
+
+The free plan spins the service down when idle; the first request afterwards takes a while, and
+the in-memory daily cap and live results reset. To change the model: Environment > `AGENT_MODEL`.
+
+Client IP for the rate limiter: Render puts Cloudflare in front and appends to a client-sent
+`X-Forwarded-For`, so the Blueprint uses `True-Client-IP`, which Cloudflare sets and Render support
+recommends but Render's docs do not list. If it ever disappears, the limiter falls back to the proxy
+address (one shared bucket: stricter, not looser).
+
+## DigitalOcean App Platform (optional, secondary)
+
+Not needed if the Render service runs; use it only to host the demo on DigitalOcean too, at $5/month.
+`.do/app.yaml` builds the same `Dockerfile`: one `apps-s-1vcpu-0.5gb` instance (the smallest,
+single instance only), `http_port` 8080 (App Platform sets `PORT` to it), health check `/health`,
+deploy on push to `master`, the client IP from `do-connecting-ip`, and the same non-secret live
+settings. Fields checked against the App Spec reference
+(https://docs.digitalocean.com/products/app-platform/reference/app-spec/); `doctl` was not available
+to validate it. Secrets are not in the committed spec.
 
 1. Edit `github.repo` in `.do/app.yaml` if the repo is not `CodewithJha/bolibench`.
-2. `doctl apps create --spec .do/app.yaml` (after `doctl auth init`), or Control Panel: Create App, pick the repo, then replace the generated spec with this one under Settings > App Spec.
-3. App > Settings > web component > Environment Variables: add `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN`, tick Encrypt, save (redeploys).
-4. Check the `*.ondigitalocean.app` URL the app shows.
+2. `doctl apps create --spec .do/app.yaml` (after `doctl auth init`; `doctl apps spec validate .do/app.yaml` first), or Control Panel: Create App, pick the repo, then replace the generated spec with this one under Settings > App Spec.
+3. Live mode only: App > Settings > web component > Environment Variables: add `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN`, tick Encrypt, save (redeploys).
+4. Check the `*.ondigitalocean.app` URL the app shows, with the curls below.
 
 ## Custom `.tech` domain
 
@@ -144,9 +206,12 @@ DNS changes can take minutes to hours. `dig +short CNAME demo.<name>.tech` shows
 ## Verify a deployment
 
 ```sh
-BASE=https://bolibench-demo.onrender.com   # or the DO / custom domain URL
-curl -s $BASE/health                                  # "live": true once live mode is configured
+BASE=https://<service>.onrender.com   # or the DO / custom domain URL
+curl -s $BASE/health                                  # {"status": "ok", "cases": 12, "runs": 5, "live": false}; true once live mode is configured
+curl -s $BASE/api/cases | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'   # 12
 curl -s $BASE/api/runs | python3 -m json.tool | head -30
+curl -s $BASE/api/integrations | python3 -m json.tool | head -20
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/       # 200
 curl -s $BASE/api/runs/qwen3-8b-agent-v2-2026-10-17/ambiguous-previous-order | python3 -m json.tool | head
 curl -s -X POST --data-binary @demo/example-request.json $BASE/api/evaluate | python3 -c 'import json,sys; print(json.load(sys.stdin)["evaluation"]["verdict"])'   # pass
 curl -s -o /dev/null -w '%{http_code}\n' --path-as-is $BASE/api/runs/../../pyproject.toml   # 404
