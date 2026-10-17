@@ -1,5 +1,7 @@
+import html
 import http.client
 import json
+import shutil
 import threading
 import urllib.request
 from collections.abc import Callable, Iterator
@@ -11,7 +13,18 @@ from typing import Any
 
 import pytest
 
-from bolibench.server import LIVE_DISABLED, MAX_BODY, MAX_STEPS, REFUSE_AGENT_URL, DemoServer, Live, RateLimiter, load_demo, scrub
+from bolibench.server import (
+    LIVE_DISABLED,
+    MAX_BODY,
+    MAX_STEPS,
+    REFUSE_AGENT_URL,
+    DemoServer,
+    Live,
+    RateLimiter,
+    live_from_env,
+    load_demo,
+    scrub,
+)
 
 ROOT = Path(__file__).parent.parent
 DEMO = ROOT / "demo"
@@ -203,14 +216,33 @@ def test_index_html(server: DemoServer) -> None:
     page = body.decode()
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert "default-src 'none'" in headers["Content-Security-Policy"]
+    assert "records every tool call" in page and "the 12 cases" in page
     for label in LABELS:
         assert label in page
         assert f'href="/api/runs/{label}/{CASE}"' in page
-    assert "<script src" not in page and "http://" not in page and "https://" not in page
+    for case in DEMO_DATA.cases.values():
+        assert f"<code>{case.id}</code>" in page
+    for i in json.loads((DEMO / "integrations.json").read_text(encoding="utf-8"))["integrations"]:
+        assert html.escape(i["name"]) in page and html.escape(i["status"]) in page
+    # no external resources: every src/href is same-origin
+    assert "<script src" not in page and "<link" not in page and 'src="http' not in page and 'href="http' not in page
+
+
+def test_integrations_endpoint(server: DemoServer) -> None:
+    assert get_json(server, "/api/integrations") == json.loads((DEMO / "integrations.json").read_text(encoding="utf-8"))
+
+
+def test_invalid_integrations_stop_startup(tmp_path: Path) -> None:
+    demo = shutil.copytree(DEMO, tmp_path / "demo")
+    data = json.loads((demo / "integrations.json").read_text(encoding="utf-8"))
+    data["integrations"][0]["status"] = "verified"  # not one of the documented statuses
+    (demo / "integrations.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_demo(ROOT / "suites" / "orders", demo)
 
 
 def test_no_absolute_paths_in_responses(server: DemoServer) -> None:
-    paths = ["/", "/health", "/api/cases", "/api/runs"] + [f"/api/runs/{label}/{CASE}" for label in LABELS]
+    paths = ["/", "/health", "/api/cases", "/api/runs", "/api/integrations"] + [f"/api/runs/{label}/{CASE}" for label in LABELS]
     bodies = [request(server, "GET", p)[2] for p in paths] + [request(server, "POST", "/api/evaluate", b"{")[2]]
     bodies.append(request(server, "POST", "/api/evaluate", json.dumps({"case_id": CASE, "script": GOOD}).encode())[2])
     for body in bodies:
@@ -407,3 +439,40 @@ def test_live_secrets_never_leak(monkeypatch: pytest.MonkeyPatch, capfd: pytest.
 def test_live_config_is_checked_at_startup(token: str, url: str) -> None:
     with pytest.raises(ValueError):
         Live(token, url)
+
+
+AGENT_URL = "http://127.0.0.1:8765/turn"
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {},
+        {"BOLIBENCH_DEMO_TOKEN": "", "BOLIBENCH_LIVE_AGENT_URL": "", "BOLIBENCH_LIVE_DAILY_CAP": "", "BOLIBENCH_LIVE_TURN_TIMEOUT": ""},
+        {"BOLIBENCH_DEMO_TOKEN": TOKEN},  # no hosted agent (no model key): read-only
+        {"BOLIBENCH_LIVE_AGENT_URL": AGENT_URL},
+    ],
+)
+def test_live_off_without_token_or_agent(env: dict[str, str]) -> None:
+    assert live_from_env(env) is None
+
+
+def test_live_from_env_on() -> None:
+    env = {"BOLIBENCH_DEMO_TOKEN": TOKEN, "BOLIBENCH_LIVE_AGENT_URL": AGENT_URL, "BOLIBENCH_LIVE_DAILY_CAP": "3"}
+    assert live_from_env(env) == Live(TOKEN, AGENT_URL, 40.0, 3)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"BOLIBENCH_LIVE_DAILY_CAP": "lots"},
+        {"BOLIBENCH_LIVE_DAILY_CAP": "0"},
+        {"BOLIBENCH_LIVE_TURN_TIMEOUT": "nan"},
+        {"BOLIBENCH_LIVE_TURN_TIMEOUT": "-1"},
+        {"BOLIBENCH_DEMO_TOKEN": "short"},  # rejected even while live mode would be off
+        {"BOLIBENCH_DEMO_TOKEN": TOKEN, "BOLIBENCH_LIVE_AGENT_URL": "https://example.com/turn"},
+    ],
+)
+def test_invalid_live_env_fails_loudly(env: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        live_from_env(env)

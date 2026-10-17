@@ -15,12 +15,13 @@ import os
 import re
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import Field, ValidationError
 
@@ -61,6 +62,10 @@ class Live:
     def __post_init__(self) -> None:
         if len(self.token) < 16:
             raise ValueError("BOLIBENCH_DEMO_TOKEN must be at least 16 characters")
+        if not 0 < self.turn_timeout <= 600:  # also rejects nan
+            raise ValueError("BOLIBENCH_LIVE_TURN_TIMEOUT must be between 0 and 600 seconds")
+        if self.daily_cap < 1:
+            raise ValueError("BOLIBENCH_LIVE_DAILY_CAP must be at least 1")
         check_agent_url(self.agent_url)
 
 
@@ -75,6 +80,20 @@ class BundledRun(Model):
 
 class RunIndex(Model):
     runs: list[BundledRun]
+
+
+class Integration(Model):
+    name: str
+    category: str
+    # the highest level actually reached; "live-verified" means a real call to the service or a real run of the model
+    status: Literal["not verified", "implemented", "offline-tested", "live-verified (local)", "live-verified (hosted)"]
+    evidence: str  # repo-relative paths or a plain-text pointer
+    note: str
+
+
+class IntegrationIndex(Model):
+    as_of: str
+    integrations: list[Integration] = Field(min_length=1)
 
 
 class EvaluateRequest(Model):
@@ -138,22 +157,40 @@ def load_demo(suite_dir: Path, demo_dir: Path) -> Demo:
                 "adapters": [a.model_dump(mode="json") for a in summary.adapters],
             }
         )
+    integrations = IntegrationIndex.model_validate_json((demo_dir / "integrations.json").read_bytes())
     pages["/api/cases"] = (JSON, dumps(scrub([c.model_dump(mode="json") for c in cases.values()])))
     pages["/api/runs"] = (JSON, dumps(scrub(runs)))
+    pages["/api/integrations"] = (JSON, dumps(scrub(integrations.model_dump())))
     example = (demo_dir / "example-request.json").read_text(encoding="utf-8")
-    pages["/"] = ("text/html; charset=utf-8", render_index(cases, index.runs, verdicts, example).encode())
+    page = render_index(cases, index.runs, verdicts, example, integrations)
+    pages["/"] = ("text/html; charset=utf-8", page.encode())
     return Demo(cases, len(runs), pages)
 
 
 def render_index(
-    cases: dict[str, TestCase], runs: list[BundledRun], verdicts: dict[str, dict[str, tuple[str, list[str]]]], example: str
+    cases: dict[str, TestCase],
+    runs: list[BundledRun],
+    verdicts: dict[str, dict[str, tuple[str, list[str]]]],
+    example: str,
+    integrations: IntegrationIndex,
 ) -> str:
     e = html.escape
     case_ids = sorted(set(cases) | {c for cells in verdicts.values() for c in cells})
     head = "".join(f"<th>{e(r.label)}<br><small>{e(r.model)}<br>{e(r.note)}</small></th>" for r in runs)
+    totals = "".join(
+        f"<th>{sum(v == 'pass' for v, _ in verdicts[r.label].values())} of {len(verdicts[r.label])} pass</th>" for r in runs
+    )
+    integration_rows = "".join(
+        f'<tr><td>{e(i.name)}<br><small>{e(i.category)}</small></td><td class="{"pass" if i.status.startswith("live") else ""}">'
+        f"{e(i.status)}</td><td><small>{e(i.evidence)}</small></td><td><small>{e(i.note)}</small></td></tr>"
+        for i in integrations.integrations
+    )
     rows = []
     for cid in case_ids:
-        tags = ", ".join(cases[cid].tags) if cid in cases else "(not in current suite)"
+        if cid in cases:
+            tags = e(", ".join(cases[cid].tags)) + f"<br>user: {e(cases[cid].turns[0])}"
+        else:
+            tags = "(not in current suite)"
         cells = []
         for r in runs:
             if cid not in verdicts[r.label]:
@@ -164,7 +201,7 @@ def render_index(
                 f'<td class="{e(verdict)}"><a href="/api/runs/{e(r.label)}/{e(cid)}">{e(verdict)}</a>'
                 f"<br><small>{e(', '.join(cats))}</small></td>"
             )
-        rows.append(f"<tr><td><code>{e(cid)}</code><br><small>{e(tags)}</small></td>{''.join(cells)}</tr>")
+        rows.append(f"<tr><td><code>{e(cid)}</code><br><small>{tags}</small></td>{''.join(cells)}</tr>")
     options = "".join(f'<option{" selected" if c == "ambiguous-previous-order" else ""}>{e(c)}</option>' for c in cases)
     script = json.dumps(json.loads(example)["script"], ensure_ascii=False, indent=1)
     return f"""<!doctype html>
@@ -177,14 +214,28 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding
 textarea{{width:100%;font:13px ui-monospace,monospace}}pre{{background:#f5f5f7;padding:1rem;overflow:auto;max-height:40rem}}
 </style></head><body>
 <h1>BoliBench</h1>
-<p>Hindi-English and Awadhi order-management cases. Agents are judged on the tool calls a sandbox observed and the
-final sandbox state, not on what they say. Below: bundled real runs (each a single unseeded run, so per-case
-differences may be sampling noise), then a live evaluator for scripted test harnesses.
-JSON: <a href="/api/cases">/api/cases</a> · <a href="/api/runs">/api/runs</a> · <a href="/health">/health</a></p>
-<h2>Bundled runs</h2>
-<table><tr><th>case</th>{head}</tr>{''.join(rows)}</table>
+<p>BoliBench is an open-source benchmark for conversational agents that act through tools. Each case is a short
+order-management conversation in Hindi-English code-switching or Awadhi ("cancel the old kurta order", "which
+order?"). The agent talks to a sandboxed shop: BoliBench records every tool call it makes and the final state of
+the orders, and the verdict comes from those observations (right order cancelled, nothing else touched, asked
+when it was ambiguous), not from what the agent claims in its reply. Failures are classified, e.g.
+<code>entity_resolution</code> for acting on the wrong order.</p>
+<p>On this page: the {len(case_ids)} cases with real bundled runs side by side, which integrations are
+verified and how far, a scripted evaluator anyone can try, and a token-gated live run.
+JSON: <a href="/api/cases">/api/cases</a> · <a href="/api/runs">/api/runs</a> ·
+<a href="/api/integrations">/api/integrations</a> · <a href="/health">/health</a></p>
+<h2>Cases and bundled runs</h2>
+<p>One row per case, one column per bundled run. Each run is a single unseeded run, so per-case differences
+may be sampling noise.</p>
+<table><tr><th>case</th>{head}</tr>{''.join(rows)}<tr><th>total</th>{totals}</tr></table>
 <p><small>Verdicts and failure classifications are from each run's artifact, judged when the run was made.
 Click a verdict for the full artifact (turns, tool calls, final state, checks).</small></p>
+<h2>Integrations</h2>
+<p>What each integration has actually been checked against, as of {e(integrations.as_of)}:
+<b>implemented</b> (code in the repo), <b>offline-tested</b> (tests against fakes, stubs or local test
+servers), <b>live-verified</b> (a real call to the service or a real run of the model, locally or on a hosted
+deployment), <b>not verified</b>. Anything that needs an account or key is not live-verified until it says so.</p>
+<table><tr><th>integration</th><th>status</th><th>evidence (in the repo)</th><th>note</th></tr>{integration_rows}</table>
 <h2>Evaluate a script</h2>
 <p>A script is one list of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>,
 <code>{{"text": ...}}</code> (reply) or <code>{{"reason": ...}}</code> (adapter failure). It replays against a fresh
@@ -442,17 +493,29 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, entry)
 
 
+def live_from_env(env: Mapping[str, str]) -> Live | None:
+    """Live settings, or None when the token or the agent is absent. Empty values count as absent (a platform
+    secret left blank); a value that is set but invalid raises, even when live mode would be off anyway."""
+    token, agent_url = env.get("BOLIBENCH_DEMO_TOKEN", ""), env.get("BOLIBENCH_LIVE_AGENT_URL", "")
+    try:
+        timeout = float(env.get("BOLIBENCH_LIVE_TURN_TIMEOUT") or "40")
+        cap = int(env.get("BOLIBENCH_LIVE_DAILY_CAP") or "50")
+    except ValueError as e:
+        raise ValueError(f"BOLIBENCH_LIVE_TURN_TIMEOUT / BOLIBENCH_LIVE_DAILY_CAP must be numbers: {e}") from None
+    checked = Live(token or "unset-placeholder", agent_url or "http://127.0.0.1:1/turn", timeout, cap)
+    return checked if token and agent_url else None
+
+
 def main() -> None:
     env = os.environ
-    host = env.get("HOST") or ("0.0.0.0" if "PORT" in env else "127.0.0.1")
-    port = int(env.get("PORT", "8080"))
-    demo = load_demo(Path(env.get("BOLIBENCH_SUITE", "suites/orders")), Path(env.get("BOLIBENCH_DEMO", "demo")))
-    token, agent_url = env.get("BOLIBENCH_DEMO_TOKEN"), env.get("BOLIBENCH_LIVE_AGENT_URL")
-    live = None
-    if token and agent_url:
-        timeout, cap = float(env.get("BOLIBENCH_LIVE_TURN_TIMEOUT", "40")), int(env.get("BOLIBENCH_LIVE_DAILY_CAP", "50"))
-        live = Live(token, agent_url, timeout, cap)
-    server = DemoServer((host, port), demo, client_ip_header=env.get("BOLIBENCH_CLIENT_IP_HEADER"), live=live)
+    try:
+        host = env.get("HOST") or ("0.0.0.0" if "PORT" in env else "127.0.0.1")
+        port = int(env.get("PORT") or "8080")
+        live = live_from_env(env)
+        demo = load_demo(Path(env.get("BOLIBENCH_SUITE") or "suites/orders"), Path(env.get("BOLIBENCH_DEMO") or "demo"))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"bolibench demo: invalid configuration: {e}") from None
+    server = DemoServer((host, port), demo, client_ip_header=env.get("BOLIBENCH_CLIENT_IP_HEADER") or None, live=live)
     print(f"bolibench demo on http://{host}:{server.server_port} ({len(demo.cases)} cases)", flush=True)
     print(f"live mode: on, agent {live.agent_url}, daily cap {live.daily_cap}" if live else f"live mode: off ({LIVE_DISABLED})", flush=True)
     server.serve_forever()
