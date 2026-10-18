@@ -168,7 +168,7 @@ def test_recovered_injected_failure_then_unrelated_failure_is_not_recovery_failu
     record, result = play("recovery-after-failed-cancel", [[cancel("ORD-121"), cancel("ORD-121"), Reply(text="हो गया")]])
     assert [c.status for c in record.tool_calls] == ["injected_failure", "ok"]
     assert verdicts(result)["required_actions"] == "fail"  # update_quantity never attempted
-    assert [c[0] for c in categories(result)] == ["tool_selection"]
+    assert [c[0] for c in categories(result)] == ["unclassified"]  # the correct cancel is not blamed as tool_selection
 
 
 def test_unrecovered_injected_failure_is_recovery_failure() -> None:

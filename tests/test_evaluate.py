@@ -214,6 +214,29 @@ def test_wrong_tool_and_tool_errors() -> None:
     assert categories(case, broken) == [("tool_execution", "likely")]
 
 
+def test_tool_selection_never_cites_a_required_call_and_owns_its_forbidden_hit() -> None:
+    update = {"tool": "update_quantity", "args": {"order_id": "ORD-102", "quantity": 2}}
+    omitted = make_case(required_actions=[CANCEL_101, update], exclusive_actions=True)
+    assert categories(omitted, run(call("cancel_order", order_id="ORD-101"), final_state=orders("cancelled"))) == [("unclassified", "possible")]
+    wrong_tool = make_case(required_actions=[update], exclusive_actions=True)
+    record = run(call("cancel_order", order_id="ORD-102"), final_state=orders(ord102="cancelled"))
+    assert categories(wrong_tool, record) == [("tool_selection", "likely")]
+
+
+def test_unknown_tool_is_forbidden_only_under_exclusive_actions() -> None:
+    made_up = call("cancel_all_orders", error="unknown tool: cancel_all_orders")
+    lenient = make_case(final_state={"orders.ORD-101.status": "placed"}, forbidden_actions=[{"tool": "cancel_order"}])
+    assert evaluate(lenient, run(made_up, final_state=orders())).verdict == "pass"
+    assert categories(lenient, run(made_up, call("cancel_order", order_id="ORD-101"), final_state=orders("cancelled"))) == [
+        ("policy_violation", "certain"),
+        ("tool_execution", "likely"),
+    ]
+    strict = lenient.model_copy(update={"expected": lenient.expected.model_copy(update={"exclusive_actions": True})})
+    result = evaluate(strict, run(made_up, final_state=orders()))
+    assert result.verdict == "fail" and [c.metric for c in result.checks if c.verdict == "fail"] == ["forbidden_actions"]
+    assert [(c.category, c.confidence, c.evidence) for c in result.classifications] == [("tool_selection", "certain", ["tool_calls[0]"])]
+
+
 def test_correction_ignored_is_intent_interpretation() -> None:
     case = make_case(required_actions=[{"tool": "update_quantity", "args": {"order_id": "ORD-101", "quantity": 3}}])
     record = run(call("update_quantity", order_id="ORD-101", quantity=2), final_state=orders())

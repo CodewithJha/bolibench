@@ -10,6 +10,8 @@ Semantics:
   spec is treated exactly like a forbidden attempt. Read-only tools are never restricted. Such an
   attempt that the sandbox rejected for bad arguments, on a tool a required action uses, still fails
   forbidden_actions but is classified tool_execution (malformed call), not as a policy violation.
+  So is every attempt of a tool name the sandbox does not register (e.g. `cancel_all_orders`),
+  classified tool_selection (certain).
 - recovery_failure is only for an injected failure with no later successful call of the same tool
   and args.
 - final_state is judged on its own; rejected and injected-failure calls never mutate state.
@@ -39,7 +41,8 @@ from bolibench.sandbox import BAD_ARGS
 
 MISSING = object()
 READ_ONLY = {"list_orders", "get_order", "ask_user"}
-CONSEQUENTIAL = set(get_args(Tool)) - READ_ONLY
+TOOLS = set(get_args(Tool))
+CONSEQUENTIAL = TOOLS - READ_ONLY
 AMBIGUITY_TAGS = {"ambiguous_reference", "missing_information"}
 NO_CALLS = "adapter does not expose tool calls"
 STAGE: dict[Category, str] = {
@@ -88,7 +91,11 @@ def _forbidden_hits(case: TestCase, run: RunRecord) -> list[int]:
     calls, required = run.tool_calls, case.expected.required_actions
     hits = {i for i, c in enumerate(calls) if any(_matches(s, c) for s in case.expected.forbidden_actions)}
     if case.expected.exclusive_actions:
-        hits.update(i for i, c in enumerate(calls) if c.tool in CONSEQUENTIAL and not any(_matches(s, c) for s in required))
+        hits.update(
+            i
+            for i, c in enumerate(calls)
+            if c.tool not in TOOLS or (c.tool in CONSEQUENTIAL and not any(_matches(s, c) for s in required))
+        )
     for spec in required:
         if spec.max_attempts is not None:
             hits.update([i for i, c in enumerate(calls) if _matches(spec, c)][spec.max_attempts :])
@@ -255,6 +262,11 @@ def classify(case: TestCase, run: RunRecord, checks: list[CheckResult]) -> list[
     # failure is a symptom of the same decision, not a separate tool_execution/recovery failure.
     forbidden = _forbidden_hits(case, run) if "forbidden_actions" in failed else []
     malformed = [i for i in forbidden if _malformed(case, calls[i])]
+    unknown = [i for i in forbidden if calls[i].tool not in TOOLS]
+    # successful consequential calls that satisfy no required action, and attempts of unregistered
+    # tools: what a wrong tool choice looks like
+    others = sorted(unknown + [i for i, c in done if c.tool in CONSEQUENTIAL and not any(_matches(s, c) for s in case.expected.required_actions)])
+    substitutes: set[int] = set()
 
     if "ask_policy" in failed:
         add(ask_category, by_metric["ask_policy"].evidence, "likely" if ambiguous else "certain", "ask_policy")
@@ -263,7 +275,6 @@ def classify(case: TestCase, run: RunRecord, checks: list[CheckResult]) -> list[
         ref = f"expected.required_actions[{j}]"
         same = [i for i, c in enumerate(calls) if c.tool == spec.tool and (c.status == "ok" or i in forbidden) and i not in malformed]
         errored = [i for i, c in enumerate(calls) if c.tool == spec.tool and c.status == "rejected" and (i not in forbidden or i in malformed)]
-        others = [i for i, c in done if c.tool not in READ_ONLY]
         if spec.tool == "ask_user":
             add(ask_category, [ref], "likely", "required_actions")
         elif same:
@@ -272,12 +283,17 @@ def classify(case: TestCase, run: RunRecord, checks: list[CheckResult]) -> list[
         elif errored:
             add("tool_execution", [ref, *_refs(errored)], "likely", "required_actions")
         elif others and not any(c.tool == spec.tool for c in calls):  # an attempted tool was selected
+            substitutes.update(others)
             add("tool_selection", [ref, *_refs(others)], "likely", "required_actions")
 
     for i in forbidden:
         spec = next((s for _, s in unmet if s.tool == calls[i].tool), None)
         if i in malformed:
             add("tool_execution", _refs([i]), "likely", "forbidden_actions")
+        elif i in unknown:
+            add("tool_selection", _refs([i]), "certain", "forbidden_actions")
+        elif i in substitutes:
+            add("tool_selection", _refs([i]), "likely", "forbidden_actions")
         elif spec is not None:
             add(_misread(spec, calls[i]), _refs([i]), "likely", "forbidden_actions")
         elif ambiguous:
