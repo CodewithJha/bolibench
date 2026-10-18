@@ -308,7 +308,8 @@ single run with full artifacts and a per-case audit is in `docs/audits/qwen3-8b-
 - `final_state` is judged on its own; rejected and failed calls never change state.
 - `max_attempts` on a required action counts attempts of any status; attempts past it fail
   `forbidden_actions` like any forbidden attempt. So does, with `exclusive_actions`, any
-  consequential attempt that matches no required action.
+  consequential attempt that matches no required action, and any attempt of a tool name the sandbox
+  does not register (e.g. `cancel_all_orders`; classified `tool_selection`, certain).
 - `recovery_failure` is only given for an injected failure that no later successful call with the
   same tool and arguments followed. A recovered failure is never blamed for an unrelated failure.
 - `ask_before` needs the matching `ask_user` in an earlier turn than the first attempt of the tool
@@ -332,30 +333,55 @@ uv run bolibench export --to mongo --dry-run runs/<run dir>   # or --to tiger; `
 uv run bolibench serve                                       # public demo on http://127.0.0.1:8080
 ```
 
-- ElevenLabs speech round-trip (`run --speech elevenlabs`, stdlib only): offline-tested against fakes
-  and a local stub; no live call yet. `docs/integrations/elevenlabs.md`
-- Public demo and token-gated live runs (`bolibench serve`, Docker, Render, DigitalOcean App
-  Platform): offline-tested; not deployed yet. `docs/deployment.md`
-- MongoDB Atlas export (`export --to mongo`, extra `mongo`): offline-tested with dry runs and fakes;
-  opt-in live test, not run here. `docs/integrations/mongodb-atlas.md`
-- Tiger Data export with similar-failure search (`export --to tiger`, extra `tiger`): offline-tested;
-  opt-in live test, not run here. `docs/integrations/tiger-data.md`
-- Temporal durable runs (`python -m bolibench.temporal_run`, extra `temporal`): tested on temporalio's
-  local test server; not run against Temporal Cloud. `docs/integrations/temporal.md`
-- Example agent on OpenAI-compatible endpoints (DigitalOcean Gemma) with Sentry tracing (extra
-  `sentry`): offline-tested; no live DSN or hosted endpoint used yet. One local `gemma3:4b` run is
-  audited in `docs/audits/gemma-gemma3-4b-2026-10-17.md`. `docs/integrations/gemma-sentry.md`
+Status as of 2026-10-18. "Live" means a real call to the service or a real run of the model; every
+claim is backed by `docs/live-verification-report.md` or the linked audit.
+
+- ElevenLabs speech round-trip (`run --speech elevenlabs`, stdlib only): **live-verified** on the free
+  tier (TTS, STT, the opt-in live test, the CLI with the audio cache, and 3 cases end to end with a
+  local `qwen3:8b` agent acting on the transcripts). Synthetic voice, one run per case.
+  `docs/integrations/elevenlabs.md`
+- Example agent on OpenAI-compatible endpoints: **live-verified (hosted)** with Gemma 4
+  (`gemma-4-31b-it`) on Google's Gemini API, native tool calls, `--reasoning-effort minimal`: one
+  full-suite run, 8 pass / 3 fail / 1 error (the error is a turn deadline missed through provider
+  latency). `docs/audits/gemma4-gemini-api-2026-10-18.md`. DigitalOcean inference: not called (no
+  key). Local `gemma3:4b` run: `docs/audits/gemma-gemma3-4b-2026-10-17.md`.
+  `docs/integrations/gemma-sentry.md`
+- Sentry tracing (extra `sentry`): offline only (real SDK, in-memory transport); no DSN yet.
+  `docs/integrations/gemma-sentry.md`
+- Backboard bridge (`examples/backboard_agent.py`, `--assistant-id` required): **partial**. The real API
+  works end to end (tool-call round trip, memory isolation); the chosen open-weight model is blocked
+  because the account's free credit does not pay for chat, and a free preview model passed 3 of 4
+  cases. `docs/audits/backboard-2026-10-18.md`, `docs/integrations/backboard.md`
 - Mastra framework agent (`examples/mastra-agent`, TypeScript): offline `npm test`, plus one real
   full-suite run with local `qwen3:8b` (6 pass, 6 fail). `docs/integrations/mastra.md`
-- Backboard bridge (`examples/backboard_agent.py`): tested offline against a stub only.
-  `docs/integrations/backboard.md`
+- Temporal durable runs (`python -m bolibench.temporal_run`, extra `temporal`): local only (temporalio
+  test server and the local dev server, including a worker crash and resume); not on Temporal Cloud.
+  `docs/integrations/temporal.md`
+- MongoDB export (`export --to mongo`, extra `mongo`): local only (MongoDB 7.0.45); Atlas not run.
+  `docs/integrations/mongodb-atlas.md`
+- Tiger Data export with similar-failure search (`export --to tiger`, extra `tiger`): local only
+  (TimescaleDB + pgvector); Tiger Cloud not run. `docs/integrations/tiger-data.md`
+- Public demo and token-gated live runs (`bolibench serve`, Docker, Render, DigitalOcean App
+  Platform): read-only demo deployed on Render (https://bolibench-demo.onrender.com); live mode off
+  there for now; DigitalOcean App Platform not deployed (no key). `docs/deployment.md`
+
+## Benchmark audit
+
+`docs/benchmark-audit.md` (2026-10-18) reviewed all 12 cases, the evaluator and the sandbox. Two
+classifier defects were fixed (a correct call blamed as `tool_selection`, and a wrong-tool call given
+two categories); every case now pins `status` and `quantity` of every order; and under
+`exclusive_actions` a call to a tool name the sandbox does not register is now a forbidden attempt.
+Re-evaluating every stored artifact with the current evaluator changes no verdict and no check; two
+copies of one case's classifications lose a `tool_selection` label. Adversarial tests:
+`tests/test_adversarial.py`. Test suite at that point: `uv run pytest -q` 387 passed, 4 skipped (the
+opt-in live tests).
 
 ## Known limitations
 
 - Transcript-level by default. The optional speech round-trip uses synthetic TTS audio (no real
   speakers, noise or phone codecs), and there is no speech-recognition failure classification yet.
-- No adapter for a hosted model or voice platform; the webhook adapter needs you to run the agent
-  locally. The fake adapter is a scripted harness and says nothing about any AI system.
+- No built-in adapter for a hosted model or voice platform; the webhook adapter needs you to run the
+  agent locally (it may call a hosted model API, as the example agents do). The fake adapter is a scripted harness and says nothing about any AI system.
 - Only the two injected-failure cases set `max_attempts`, so elsewhere a repeated attempt of the
   required action itself (e.g. cancelling the right order twice) does not fail a case.
 - Classification covers failed checks, not each unmet action: when an unrecovered injected failure

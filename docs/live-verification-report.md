@@ -1,7 +1,9 @@
 # Live verification report (HF26 Week 2: Side Hustle)
 
-State on 2026-10-18 (IST), working tree on top of `master` @ `0fbd6e8`. Every row below comes from
-recorded output: a log, an artifact, or a command rerun while writing this. Nothing is inferred.
+State on 2026-10-18 (IST), working tree on top of `master` @ `0fbd6e8`; updated at about 13:30 IST on
+top of `ace4e9f` (uncommitted: the benchmark audit, the hosted Gemma 4, Backboard and ElevenLabs work,
+3.7 and 3.8). Every row below comes from recorded output: a log, an artifact, or a command rerun while
+writing this. Nothing is inferred.
 
 Modes:
 
@@ -9,8 +11,11 @@ Modes:
   our reading of the sponsor's docs, not the sponsor's service.
 - **live (local)**: the sponsor's real software on this laptop (Ollama models, MongoDB 7, TimescaleDB +
   pgvector, the Temporal dev server, a Mastra agent). Not the hosted product.
-- **live (hosted)**: the sponsor's hosted service with a real account. Nothing is in this mode yet:
-  there are no credentials on this machine (`.env` is absent).
+- **live (hosted)**: the sponsor's hosted service with a real account. In this mode (3.7): the Render
+  deployment, ElevenLabs, Gemma 4 on Google's Gemini API, and Backboard (partial). The ElevenLabs,
+  Backboard and Gemini keys were reused from the owner's other project into a git-ignored local
+  `.env` (`docs/credential-matrix.md`); there is no DigitalOcean, Sentry, Atlas or Tiger Cloud
+  credential.
 
 Raw logs and run directories are in the git-ignored `runs/` (paths below). They stay local; this
 report is the committed record. Worker timestamps in logs are UTC (`2026-10-17T18:35Z` =
@@ -39,16 +44,16 @@ the [challenge page with FAQ](https://dev.to/challenges/hacktoberfest-week2-2026
 
 | Category | Decision | Evidence in hand | Evidence still needed (user) |
 |---|---|---|---|
-| Gemma | entered | `gemma3:4b` full suite 2/12 (audited); 3-case rerun matched | none |
+| Gemma | entered | `gemma3:4b` full suite 2/12 (audited); 3-case rerun matched; hosted `gemma-4-31b-it` on the Gemini API full suite 8 pass / 3 fail / 1 error (audited, 3.7) | none |
 | Mastra | entered | full suite 6/12; 2-case rerun matched; `npm test` 5/5 | none |
 | Temporal | entered, framed as a durable *evaluation* run (not a durable agent) | local dev server: summary identical to `bolibench run`, `kill -9` resume with activity attempt 2, same-id restart re-ran nothing | UI screenshots (local, no account) |
-| Render | entered once deployed | image runs locally; Blueprint valid | deploy, URL, `/health`, live-mode result |
-| DigitalOcean | entered once called | OpenAI-compatible path live (local) via Ollama `/v1` | model key, probe, one case / suite |
-| Sentry Agent Tracing | entered once traced | spans and privacy tested offline | DSN, traced run, screenshots |
-| ElevenLabs | entered once run | round-trip tested offline | key, voice id, live test, speech run |
+| Render | entered | deployed read-only at https://bolibench-demo.onrender.com (free plan, commit `ace4e9f`); `/health` ok, public smoke tests passed (3.7) | dashboard screenshot; live-mode result (needs the DigitalOcean key + demo token) |
+| DigitalOcean | entered once called | OpenAI-compatible path live via Ollama `/v1` (local) and Google's Gemini API (hosted, not DigitalOcean) | model key, probe, one case / suite |
+| Sentry Agent Tracing | entered once traced | spans and privacy tested offline | a dedicated BoliBench DSN, traced run, screenshots |
+| ElevenLabs | entered | live TTS, STT, live test, CLI with cache, 3-case end-to-end run (3.7) | usage screenshot |
 | MongoDB Atlas | entered once on Atlas | exporter live (local) on MongoDB 7.0.45 | Atlas cluster, export, screenshot |
 | Tiger Data | entered once on Tiger Cloud | exporter + hybrid search live (local) on TimescaleDB 2.30.2 + pgvector 0.8.7; this is a rehearsal, not the category evidence | Tiger Cloud service, export, `--similar`, screenshot |
-| Backboard | entered once ≥2 models run | bridge tested against a stub of the documented API | key, ≥2 full-suite runs |
+| Backboard | entered once ≥2 models run | bridge run against the real API (3.7): round trip and memory isolation pass; chosen open-weight model blocked by billing; a free preview model passed 3 of 4 cases | paid credit, ≥2 full-suite runs of open-weight models |
 | .tech Domain | not entered, unless registered and serving the live demo | nothing registered | claim, CNAME, HTTPS |
 | Entire | not entered | checkpoints local only (`push_sessions: false`) | — |
 | GitHub Copilot, Tinker, TabPFN, SerpApi, Arduino | not entered | — | — |
@@ -59,7 +64,7 @@ the [challenge page with FAQ](https://dev.to/challenges/hacktoberfest-week2-2026
 
 | Item | What | Command / procedure | Date | Mode | Result | Errors | Artifact | Remaining |
 |---|---|---|---|---|---|---|---|---|
-| Test suite | all unit and offline integration tests | `uv run pytest -q`; `uv run --all-extras pytest -q` | 2026-10-18 | offline | **335 passed, 4 skipped** (both). Was 307/4 at 00:05 IST, before the workers' fixes and tests | none | terminal | The 4 skipped are opt-in live tests: `test_live_ollama_embeddings`, `test_live_mongo`, `test_live_tiger`, `test_live_elevenlabs_round_trip`. The first three passed with `BOLIBENCH_LIVE=1` against local services (3.3) |
+| Test suite | all unit and offline integration tests | `uv run pytest -q`, three times in a row (13:1x IST) | 2026-10-18 | offline | **387 passed, 4 skipped**, identical all three times (no flakes); 392/4 at about 13:35 IST after the live-mode work added server tests. Was 335/4 at `ace4e9f`, 307/4 at 00:05 IST | none | terminal | The 4 skipped are opt-in live tests: `test_live_ollama_embeddings`, `test_live_mongo`, `test_live_tiger`, `test_live_elevenlabs_round_trip`. The first three passed with `BOLIBENCH_LIVE=1` against local services (3.3); the ElevenLabs one passed live (3.7) |
 | Suite | schema check of the 12 cases | `uv run bolibench validate suites/orders` | 2026-10-18 | offline | `suites/orders: 12 cases ok` | none | terminal | — |
 | qwen3:8b, example agent v1 | full suite | `docs/audits/qwen3-8b-baseline-2026-10-17.md` | 2026-10-17 | live (local), Ollama 0.30.10 | 3 pass / 9 fail / 0 error | none | `demo/runs/qwen3-8b-baseline-2026-10-17/` | — |
 | qwen3:8b, v2 | full suite | `docs/audits/qwen3-8b-agent-v2-2026-10-17.md` | 2026-10-17 | live (local) | 6 / 6 / 0 | none | `demo/runs/qwen3-8b-agent-v2-2026-10-17/` | — |
@@ -90,11 +95,11 @@ the [challenge page with FAQ](https://dev.to/challenges/hacktoberfest-week2-2026
 
 | Item | What | Command / procedure | Date | Mode | Result | Errors | Artifact | Remaining |
 |---|---|---|---|---|---|---|---|---|
-| Docker image | build and run with no configuration | `docker build -t bolibench-demo .`; `docker run --read-only -p 10000:10000 -e PORT=10000 bolibench-demo`; the endpoint checks in `docs/deployment.md` "Verify a deployment" | 2026-10-18 | live (local) | about 218 MB unpacked (47 MB compressed); runs as `nobody` (uid 65534) on a read-only filesystem; live mode off; every endpoint answers | none | `docs/deployment.md` (procedure); local image `bolibench-demo:latest` | Render deploy |
-| `render.yaml` | Blueprint schema | `render blueprints validate render.yaml` (Render CLI 2.28.0) | 2026-10-18, rerun after the tool-mode edit | offline | `"valid": true` | none | terminal | Deploy |
+| Docker image | build and run with no configuration | `docker build -t bolibench-demo .`; `docker run --read-only -p 10000:10000 -e PORT=10000 bolibench-demo`; the endpoint checks in `docs/deployment.md` "Verify a deployment" | 2026-10-18 | live (local) | about 218 MB unpacked (47 MB compressed); runs as `nobody` (uid 65534) on a read-only filesystem; live mode off; every endpoint answers. Rebuilt from `ace4e9f` at 11:08 IST before the Render deploy: `/health` 200, `{"cases": 12, "runs": 5, "live": false}` | none | `docs/deployment.md` (procedure); local image `bolibench-demo:latest` | — (deployed, 3.7) |
+| `render.yaml` | Blueprint schema | `render blueprints validate render.yaml` (Render CLI 2.28.0) | 2026-10-18, rerun after the tool-mode edit and before the deploy | offline | `"valid": true` | none | terminal | — (deployed, 3.7) |
 | `.do/app.yaml` | App Spec | checked by hand against the App Spec reference; YAML parses | 2026-10-18 | offline | no machine validation (`doctl` not installed) | — | — | `doctl apps spec validate .do/app.yaml` if DO hosting is used (optional) |
-| Hosted tool mode | `AGENT_TOOL_MODE` default for `gemma-4-31B-it` | DigitalOcean's model table lists Chat Completions but **not tool calling** for `gemma-4-31B-it` (audit worker, docs URLs in `docs/integrations/gemma-sentry.md`) | 2026-10-18 | offline | both platform configs now set `AGENT_TOOL_MODE=json`; `native` only after the probe returns `tool_calls` | — | `render.yaml`, `.do/app.yaml`, `docs/deployment.md` | Probe with a real key |
-| Demo page + integrations panel | page explains BoliBench, the 12 cases against the 5 bundled runs, and an integrations panel from `demo/integrations.json` (`GET /api/integrations`; unknown status values stop the server at startup) | `uv run pytest -q tests/test_server.py` | 2026-10-18 | offline | 60 passed, with this report's statuses | none | `src/bolibench/server.py`, `demo/integrations.json`, `tests/test_server.py` | — |
+| Hosted tool mode | `AGENT_TOOL_MODE` default for `gemma-4-31B-it` | DigitalOcean's model table lists Chat Completions but **not tool calling** for `gemma-4-31B-it` (audit worker, docs URLs in `docs/integrations/gemma-sentry.md`) | 2026-10-18 | offline | at `ace4e9f` both platform configs set `AGENT_TOOL_MODE=json`. Superseded in the working tree by the live-mode work: `render.yaml` now targets `gemma-4-31b-it` on the Gemini API with `AGENT_TOOL_MODE=native` and `AGENT_REASONING_EFFORT=minimal` (native tool calls verified there, 3.7); the DigitalOcean alternative keeps JSON mode | — | `render.yaml`, `.do/app.yaml`, `docs/deployment.md` | DigitalOcean: probe with a real key |
+| Demo page + integrations panel | page explains BoliBench, the 12 cases against the 5 bundled runs, and an integrations panel from `demo/integrations.json` (`GET /api/integrations`; unknown status values stop the server at startup) | `uv run pytest -q tests/test_server.py` | 2026-10-18 | offline | 60 passed, with this report's statuses; 65 passed at 13:3x IST after the statuses were updated for 3.7 (13 entries) | none | `src/bolibench/server.py`, `demo/integrations.json`, `tests/test_server.py` | — |
 
 ### 3.5 Code audit against the official docs (offline)
 
@@ -104,18 +109,71 @@ Each integration's request and response handling was compared with the provider'
 | Integration | Result | Bugs fixed (with tests) | Only a live call can confirm |
 |---|---|---|---|
 | Sentry agent tracing | span ops, names and `gen_ai.*` attributes conform | **Privacy:** with the SDK's default local-variable capture, an error event from a failed model call carried the utterance, the system prompt and the `Authorization: Bearer <key>` header (the SDK's scrubber only caught a top-level `api_key` variable). Now `include_local_variables=False`. Model and tool exceptions are now captured as Sentry issues and tag the failing span with `error.type` | ingestion, how the AI Agents views show the spans, cost display for a non-OpenAI provider |
-| ElevenLabs | TTS and STT requests conform | 422 validation errors (a list under `detail`) are parsed into a readable reason; the temp file is removed if a cache write fails; a voice id `..` is rejected (no path segment) | multipart STT upload, `eleven_multilingual_v2` without `language_code`, error body shapes |
-| Backboard | `/threads/messages` fields are a subset of the documented request schema; `/threads/tool-outputs` has exactly `thread_id` + `tool_outputs` | tests tightened to the documented schemas | `tool_calls[].function.arguments` as a JSON string, `status` on non-streaming replies |
-| OpenAI-compatible (DigitalOcean) | request shape conforms; `--base-url` must be https for a remote host | — | that `gemma-4-31B-it` answers with the JSON tool format, cost per run |
+| ElevenLabs | TTS and STT requests conform | 422 validation errors (a list under `detail`) are parsed into a readable reason; the temp file is removed if a cache write fails; a voice id `..` is rejected (no path segment) | all three confirmed live on 2026-10-18 (3.7) |
+| Backboard | `/threads/messages` fields are a subset of the documented request schema | tests tightened to the documented schemas; live (3.7): `--assistant-id` required and checked, tool outputs go to the run endpoint with `tools` resent, repeated call ids are not re-executed | confirmed live: `arguments` is a JSON string, `status` is on every non-streaming reply; `/threads/tool-outputs` drops the message's tools |
+| OpenAI-compatible (DigitalOcean) | request shape conforms; `--base-url` must be https for a remote host | live on the Gemini API (3.7): `--reasoning-effort`, bounded retry on 429/5xx | DigitalOcean itself: that `gemma-4-31B-it` answers with the JSON tool format, cost per run |
 
 ### 3.6 Not testable here (no credentials)
 
-Sentry (hosted), ElevenLabs, MongoDB Atlas, Tiger Cloud, Backboard, DigitalOcean inference and App
-Platform, Render deploy, a .tech domain. Each stays out of "live (hosted)" until the user's step in
-`docs/submission-checklist.md` has run and its output is added here.
+Sentry (hosted; Nivara's DSN is deliberately not reused), MongoDB Atlas and Tiger Cloud (Nivara's
+connection strings are deliberately not reused), DigitalOcean inference and App Platform (no key), a
+paid Backboard model (free credit only), a .tech domain. Each stays out of "live (hosted)" until a
+dedicated credential exists, the step in `docs/submission-checklist.md` has run, and its output is
+added here. Credentials: `docs/credential-matrix.md`.
 
 ### 3.7 Live (hosted) results
 
 | Integration | Date | Command | Result | Artifact / screenshot |
 |---|---|---|---|---|
-| (none yet) | | | | |
+| Render deployment | 2026-10-18, created 11:10:22 IST, live 11:11:07 IST, smoke tests 11:11:56–11:12:06 IST | `render services create --type web_service --runtime docker --repo https://github.com/CodewithJha/bolibench --branch master --plan free --region singapore --health-check-path /health` plus the non-secret `envVars` of `render.yaml` (Render CLI 2.28.0); then the smoke tests below | URL https://bolibench-demo.onrender.com, service `srv-dba5nh5g1s2s73asmb5g`, plan **free**, region Singapore, commit **`ace4e9f`** (deploy `dep-dba5nhlg1s2s73asmd40`, build + deploy 45 s). `/health` 200 `{"status": "ok", "cases": 12, "runs": 5, "live": false}`. Every smoke test passed (below). Cold start not observed: after 28 minutes without public requests (11:12–11:40 IST) the instance had not spun down (Render's own `/health` checks kept arriving every ~5 s), and `/health` at 11:40:40 IST answered 200 in 0.65 s. Render documents that free instances spin down after 15 minutes idle; the first request after that is slow | Render logs (`render logs -r srv-dba5nh5g1s2s73asmb5g`): clean; this table |
+| ElevenLabs speech round-trip: **PASS** | 2026-10-18; run directories 07:00:49Z–07:03:03Z | `BOLIBENCH_LIVE=1 uv run pytest -q -s tests/test_speech.py -k live`; `bolibench run` on `awadhi-cancel-yesterday`, `codeswitch-cancel-kurta`, `similar-items-kurta-kurti` with `--scripts --speech elevenlabs --speech-audio-dir` (twice), then with the local `qwen3:8b` example agent with speech and without | Free tier, voice Sarah (verified `hi-IN`), `eleven_multilingual_v2` TTS, `scribe_v2` STT. Live test `1 passed`. Scripted 3/3 pass on both runs; the rerun had `tts_s: null` (cache hit) and identical transcripts. Local agent: speech 1 pass / 2 fail, text-only 0 / 3; the fails are the agent's, not speech's (doc). 239 TTS characters. QA re-check: 3 mp3s in the cache; every speech turn's `audio_sha256` and `audio_bytes` match a cached file, and `asr_text` equals `speech.transcript.text` | `docs/integrations/elevenlabs.md` "Verified results"; `runs/elevenlabs-{audio,scripted,qwen3-8b,qwen3-8b-text-baseline}-2026-10-18/` |
+| Gemma 4 (`gemma-4-31b-it`) on Google's Gemini API: **PASS** | 2026-10-18, 07:12:31–07:33:29Z | `examples/ollama_agent.py --backend openai --base-url https://generativelanguage.googleapis.com/v1beta/openai --api-key-env GEMINI_API_KEY --model gemma-4-31b-it --tool-mode native --reasoning-effort minimal`; `bolibench run suites/orders --timeout 180` | One unseeded full-suite run: **8 pass / 3 fail / 1 error**, agent `19f1c48c71c3+gemma-4-31b-it+openai-native+reasoning-minimal`. The error is `tool-failure-cancel`: correct calls (injected failure, then a successful retry), reply 4 s after the 180 s deadline. `agent.log`: 18 HTTP 500s, all recovered by the bounded retry, 0 tracebacks. QA re-check: `summary.json` matches the 12 artifacts; 13 turns, 22 tool calls, 0 rejected, 0 refused, no `<thought` in any turn; re-evaluating with the current evaluator reproduces every verdict. Hosted by Google, not DigitalOcean | `docs/audits/gemma4-gemini-api-2026-10-18.md`; `runs/gemma4-gemma-4-31b-it-gemini-api-2026-10-18/20261018T071231Z-249abfa4/` |
+| Backboard bridge: **PARTIAL** | 2026-10-18, 07:01–07:14Z | `examples/backboard_agent.py --assistant-id <bolibench-agent> --provider openrouter --model <model>`; `bolibench run` on single cases | Auth, model list, assistant and thread, tool-call round trip (after two live-found bridge fixes) and memory isolation: pass. Chosen open-weight `qwen/qwen3-235b-a22b-2507`: **blocked**, the free credit does not pay for LLM chat (1 case, `error`). Free preview `dots-studio/dots-3-note-preview:free`, fixed bridge: 3 pass / 1 fail of 4 cases (`cancel-single-order`, `tool-failure-cancel`, `codeswitch-cancel-kurta` pass; `ambiguous-previous-order` fail on `ask_policy`); before the fix, 0 / 4 (later calls arrived as text). QA re-check: every verdict and tool-call list matches the audit, and `ab.txt` shows 2 of 2 text-only vs 2 of 2 structured | `docs/audits/backboard-2026-10-18.md`; `runs/backboard-*-2026-10-18/` |
+
+Render deployment details:
+
+- Created with the CLI, not as a Blueprint instance (the CLI has no Blueprint-launch command), so
+  `render.yaml` is not synced to the service: later Blueprint edits must be mirrored in the
+  dashboard. Auto-deploy on commit is on. `MODEL_ACCESS_KEY` and `BOLIBENCH_DEMO_TOKEN` are not set,
+  so the demo is read-only and live mode reports itself off.
+- Startup log: `live mode: no hosted agent ...`, `bolibench demo on http://0.0.0.0:10000 (12 cases)`,
+  `live mode: off (...)`, then `==> Your service is live`. No errors or tracebacks; Render's health
+  checks on `/health` return 200.
+- Smoke tests (`BASE=https://bolibench-demo.onrender.com`, one request each):
+
+| Request | Status | Body (excerpt) |
+|---|---|---|
+| `GET /` | 200 | HTML: the 5 run labels as columns, the 12 cases as rows with linked verdicts, per-run pass totals, the Integrations panel, the evaluator form; the live section says it needs the demo owner's token. Columns are labelled "bundled runs", "single unseeded run", "judged when the run was made". Headers: `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'`, `X-Content-Type-Options: nosniff` |
+| `GET /health` | 200 | `{"status": "ok", "cases": 12, "runs": 5, "live": false}` |
+| `GET /api/cases` | 200 | 12 cases |
+| `GET /api/runs` | 200 | 5 bundles; counts equal each `demo/runs/*/summary.json`: baseline 3/9/0, v2 6/6/0, v3 6/6/0, gemma3:4b 2/10/0, Mastra 6/6/0 (pass/fail/error) |
+| `GET /api/runs/qwen3-8b-agent-v2-2026-10-17/ambiguous-previous-order` | 200 | the bundled artifact, verdict `fail` |
+| `GET /api/integrations` | 200 | 12 integrations, `as_of` 2026-10-18 (as deployed from `ace4e9f`, i.e. before this row) |
+| `GET /api/live-runs` | 200 | `{"enabled": false, "reason": "live mode is disabled on this deployment: ...", "runs": []}` |
+| `POST /api/evaluate`, `demo/example-request.json` | 200 | verdict `pass`, no classifications |
+| `POST /api/evaluate`, same script cancelling `ORD-102` (the newer order) | 200 | verdict `fail`, `entity_resolution` |
+| `POST /api/evaluate`, truncated JSON | 400 | `{"error": "invalid request", "details": [{"loc": [], "msg": "Invalid JSON: EOF while parsing a value ..."}]}` |
+| `POST /api/evaluate`, 40 000-byte body | 413 | `{"error": "body exceeds 32768 bytes"}` |
+| `POST /api/evaluate` with `agent_url` | 400 | `{"error": "agent_url is refused: ..."}` |
+| `GET --path-as-is /api/runs/../../pyproject.toml` | 404 | `{"error": "not found"}` |
+| `GET --path-as-is /api/runs/%2e%2e/%2e%2e/etc/passwd` | 404 | `{"error": "not found"}` |
+| `GET /nope` | 404 | `{"error": "not found"}` |
+| `POST /api/live-run`, no token | 404 | `{"error": "live mode is disabled on this deployment: no hosted agent or no demo token is configured"}` |
+
+  No response body or header contains `/Users/`, `/home/`, `/app/`, `Traceback`, `KEY`, `TOKEN` or a
+  bearer value; the only addresses are the bundled runs' local agent URLs (`http://127.0.0.1:...`).
+  Response time warm: 0.26–2.3 s from India.
+- Re-checked about 13:25 IST: `/health` `{"status": "ok", "cases": 12, "runs": 5, "live": false}`,
+  `/api/live-runs` `enabled: false`. Hosted live mode is still in progress. The deployed
+  `/api/integrations` is still the `ace4e9f` copy, so it shows ElevenLabs and Backboard as
+  `offline-tested` until the next deploy.
+
+### 3.8 Benchmark audit and independent QA (offline)
+
+| Item | What | Command / procedure | Date | Mode | Result | Artifact |
+|---|---|---|---|---|---|---|
+| Benchmark audit | cases, evaluator, sandbox | `docs/benchmark-audit.md` | 2026-10-18 | offline | Fixed 2 classifier defects (D1: a correct required call blamed as `tool_selection`; D2: a wrong-tool call given 2 categories); every case now pins `status` and `quantity` of every order (D3); rule change R1: under `exclusive_actions`, calling a tool name the sandbox does not register is a forbidden attempt (`tool_selection`, certain). No expectation was loosened | `docs/benchmark-audit.md`, `tests/test_adversarial.py` |
+| Mutation checks | do the tests catch evaluator regressions? | 10 mutations applied one at a time to a scratch copy under `/tmp` (the repo was not edited), then `pytest` on the evaluator, adversarial, suite and adapter tests | 2026-10-18 | offline | **10 of 10 caught.** Reverting R1, D1 or D2; forbidden matches counted only when `ok`; required actions satisfied by any status; same-turn asks allowed; hidden calls passing `required_actions`; `max_attempts` off by one; `exclusive_actions` ignoring rejected calls; and a wrong Kurti expectation each failed 1–9 tests. The "forbidden at any status" rule is caught by one unit test only, not by an adversarial test | QA scratch, not kept |
+| Historical re-evaluation | do stored verdicts still hold under the current evaluator and suite? | every artifact in `runs/` and `demo/runs/` loaded and re-evaluated in memory; nothing written | 2026-10-18 | offline | **201 artifacts: 0 verdict changes, 0 check changes, 2 classification changes**: `qwen3-8b-baseline-2026-10-17` `recovery-after-failed-cancel` (the `runs/` copy and the `demo/runs/` copy) loses a `tool_selection` label (it cited the correct cancel). Every `summary.json` matches its artifacts. The demo page shows the stored classification, labelled "judged when the run was made" | — |
+| Suite pins | spot check | `correction-quantity`, `recovery-after-failed-cancel`, `similar-sellers-mohan-sohan`, `ambiguous-previous-order` pins read against the utterances and the sandbox's effects | 2026-10-18 | offline | all correct | — |
+| Secrets | repo scan | `.env` is git-ignored and untracked; a pattern scan (API key, token, DSN and connection-string shapes) of tracked and untracked files outside `.venv`, `node_modules` and `runs` | 2026-10-18 | offline | only placeholders (`<password>`, `<secret>`) and test fixtures; no key value in any doc | — |

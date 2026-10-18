@@ -6,56 +6,63 @@
       "category": "open-weight model",
       "status": "live-verified (local)",
       "evidence": "demo/runs/gemma-gemma3-4b-2026-10-17, docs/audits/gemma-gemma3-4b-2026-10-17.md, docs/live-verification-report.md",
-      "note": "gemma3:4b full suite run locally: 2 pass / 10 fail, JSON tool mode (no native tool calling in Ollama). A 3-case rerun on 2026-10-18 gave the same verdicts, tool calls and final states (reply wording differed). Gemma 4 (gemma-4-31B-it) is only the hosted default and has not been called."
+      "note": "gemma3:4b full suite run locally: 2 pass / 10 fail, JSON tool mode (no native tool calling in Ollama). A 3-case rerun on 2026-10-18 gave the same verdicts, tool calls and final states (reply wording differed). Hosted Gemma 4: see the next entry."
+    },
+    {
+      "name": "Gemma 4 via the Gemini API",
+      "category": "open-weight model (hosted)",
+      "status": "live-verified (hosted)",
+      "evidence": "examples/ollama_agent.py --reasoning-effort, docs/audits/gemma4-gemini-api-2026-10-18.md, docs/integrations/gemma-sentry.md",
+      "note": "gemma-4-31b-it served by Google's Gemini API (OpenAI-compatible endpoint), native tool calls, reasoning_effort minimal: one unseeded full-suite run on 2026-10-18 gave 8 pass / 3 fail / 1 error. The error is the 180 s turn deadline missed through provider latency, after correct tool calls. 18 HTTP 500s were all recovered by the agent's bounded retry. Not bundled here, and not DigitalOcean."
     },
     {
       "name": "OpenAI-compatible backend",
       "category": "model backend",
-      "status": "live-verified (local)",
-      "evidence": "examples/ollama_agent.py --backend openai, docs/live-verification-report.md",
-      "note": "Run through Ollama's OpenAI-compatible /v1 endpoint with qwen3:8b: 2 of 2 cases pass, and the dummy API key appears in no artifact or log. This is the code path DigitalOcean inference uses, not a call to DigitalOcean."
+      "status": "live-verified (hosted)",
+      "evidence": "examples/ollama_agent.py --backend openai, docs/audits/gemma4-gemini-api-2026-10-18.md, docs/live-verification-report.md",
+      "note": "Local: Ollama's OpenAI-compatible /v1 with qwen3:8b, 2 of 2 cases pass. Hosted: Google's Gemini API OpenAI-compatible endpoint with gemma-4-31b-it, full suite (previous entry). Same code path DigitalOcean inference would use; DigitalOcean itself was not called."
     },
     {
       "name": "DigitalOcean serverless inference",
       "category": "model backend",
       "status": "offline-tested",
       "evidence": "examples/ollama_agent.py, tests/test_example_agent.py, docs/integrations/gemma-sentry.md",
-      "note": "Request format checked against DigitalOcean's docs and a local stub. Not called: no model access key. DigitalOcean's model table does not list tool calling for gemma-4-31B-it, so the deploy configs use JSON tool mode."
+      "note": "Blocked: no DigitalOcean model access key exists. Request format checked against DigitalOcean's docs and a local stub; never called."
     },
     {
       "name": "Sentry agent tracing",
       "category": "observability",
       "status": "offline-tested",
       "evidence": "examples/ollama_agent.py, tests/test_example_agent.py, docs/integrations/gemma-sentry.md",
-      "note": "gen_ai agent, chat and tool spans checked with the real sentry-sdk and an in-memory transport; error events carry no local variables (so no API key or utterance), and model/tool exceptions are captured. Not live-verified: no DSN."
+      "note": "Mock only: gen_ai agent, chat and tool spans checked with the real sentry-sdk and an in-memory transport; error events carry no local variables (so no API key or utterance), and model/tool exceptions are captured. No trace has been sent to Sentry: a dedicated BoliBench DSN is still needed."
     },
     {
       "name": "ElevenLabs speech",
       "category": "speech",
-      "status": "offline-tested",
+      "status": "live-verified (hosted)",
       "evidence": "src/bolibench/speech.py, tests/test_speech.py, docs/integrations/elevenlabs.md",
-      "note": "TTS then STT per user turn, checked against ElevenLabs' API docs with fakes and a local HTTP stub. Not live-verified: no API key."
+      "note": "Live on 2026-10-18 (free tier, eleven_multilingual_v2 TTS + scribe_v2 STT): TTS, STT, the opt-in live test, the CLI with the audio cache (rerun reused the audio), and 3 cases end to end with local qwen3:8b acting on the transcripts (1 pass / 2 fail; the text-only run of the same cases: 0 / 3). Synthetic voice, n=1 per case: shows the pipeline works, not speech robustness."
     },
     {
       "name": "MongoDB export (Atlas pending)",
       "category": "storage",
       "status": "live-verified (local)",
       "evidence": "src/bolibench/export_mongo.py, tests/test_export.py, docs/live-verification-report.md",
-      "note": "Exported 3 bundled runs into a local MongoDB 7.0.45: idempotent re-export, indexes, per-case report, live test passing. Not yet run against an Atlas cluster."
+      "note": "Exported 3 bundled runs into a local MongoDB 7.0.45: idempotent re-export, indexes, per-case report, live test passing. Not yet run against an Atlas cluster: needs a dedicated Atlas cluster or user created by the owner."
     },
     {
       "name": "Tiger Data export + similar-failure search (Tiger Cloud pending)",
       "category": "storage / search",
       "status": "live-verified (local)",
       "evidence": "src/bolibench/export_tiger.py, tests/test_export.py, docs/live-verification-report.md",
-      "note": "Local TimescaleDB 2.30.2 + pgvector 0.8.7 (PostgreSQL 16): hypertable export, idempotent, report, 22 failures embedded with local embeddinggemma, hybrid keyword + vector search. Not yet run on Tiger Cloud."
+      "note": "Local TimescaleDB 2.30.2 + pgvector 0.8.7 (PostgreSQL 16): hypertable export, idempotent, report, 22 failures embedded with local embeddinggemma, hybrid keyword + vector search. Not yet run on Tiger Cloud: needs a dedicated service created by the owner."
     },
     {
       "name": "Temporal durable evaluation runs",
       "category": "orchestration",
       "status": "live-verified (local)",
       "evidence": "src/bolibench/temporal_run.py, tests/test_temporal_run.py, docs/live-verification-report.md",
-      "note": "Local Temporal dev server (CLI 1.9.1, Server 1.32.0): same summary as bolibench run; after kill -9 of the worker the interrupted case ran again (attempt 2) and the run completed; restarting the same workflow id re-ran nothing. The agent in the crash test was a slow stub. This makes the evaluation run durable, not the agent."
+      "note": "Local Temporal dev server (CLI 1.9.1, Server 1.32.0): same summary as bolibench run; after kill -9 of the worker the interrupted case ran again (attempt 2) and the run completed; restarting the same workflow id re-ran nothing. The agent in the crash test was a slow stub. This makes the evaluation run durable, not the agent. Not run on Temporal Cloud."
     },
     {
       "name": "Mastra agent",
@@ -65,25 +72,25 @@
       "note": "examples/mastra-agent (@mastra/core 1.78.0) full suite on local qwen3:8b: 6 pass / 6 fail / 0 error. A 2-case rerun on 2026-10-18 gave the same verdicts and tool calls."
     },
     {
-      "name": "Backboard bridge",
+      "name": "Backboard bridge (partial: paid model blocked by billing)",
       "category": "model gateway",
-      "status": "offline-tested",
-      "evidence": "examples/backboard_agent.py, tests/test_backboard_agent.py, docs/integrations/backboard.md",
-      "note": "Request fields checked against Backboard's API reference and a local stub. Not live-verified: no API key."
+      "status": "live-verified (hosted)",
+      "evidence": "examples/backboard_agent.py, tests/test_backboard_agent.py, docs/audits/backboard-2026-10-18.md",
+      "note": "Partial. Real API on 2026-10-18: auth, model list, assistant/thread and the tool-call round trip work (two bridge bugs found live and fixed); memory isolation between cases checked. The chosen open-weight model (qwen/qwen3-235b-a22b-2507) could not run: the account's free credit does not pay for LLM chat. A zero-priced preview model passed 3 of 4 cases. No full-suite run, and not two models."
     },
     {
       "name": "Render deploy",
       "category": "deploy",
-      "status": "offline-tested",
-      "evidence": "render.yaml, Dockerfile, deploy/start.sh, tests/test_server.py, docs/deployment.md",
-      "note": "Blueprint valid per render blueprints validate; the Docker image runs locally as nobody on a read-only filesystem with every endpoint answering. Not deployed yet."
+      "status": "live-verified (hosted)",
+      "evidence": "render.yaml, Dockerfile, deploy/start.sh, docs/deployment.md, docs/live-verification-report.md",
+      "note": "Deployed on 2026-10-18 to https://bolibench-demo.onrender.com (free plan, Singapore, commit ace4e9f); /health ok and every endpoint check in docs/deployment.md passed publicly. Read-only demo: live mode is off (no model key or demo token set on the service); hosted live mode is still in progress."
     },
     {
       "name": "DigitalOcean App Platform deploy",
       "category": "deploy",
       "status": "implemented",
       "evidence": ".do/app.yaml, Dockerfile, docs/deployment.md",
-      "note": "Same Docker image as Render; the spec was checked by hand against the App Spec reference, not with doctl. Not deployed."
+      "note": "Blocked: no DigitalOcean credentials. Same Docker image as Render; the spec was checked by hand against the App Spec reference, not with doctl. Not deployed."
     }
   ]
 }

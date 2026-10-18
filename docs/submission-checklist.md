@@ -30,18 +30,21 @@ python3 examples/ollama_agent.py --model qwen3:8b --port 8000
 
 ## 0. Commit and push the verified work (15 min, required)
 
-From a normal terminal (not an editor's agent shell):
-
-```sh
-bash /tmp/bolibench-commit.v3.sh
-```
-
-It checks the branch, `origin/master`, your noreply email and the remote; makes the grouped commits;
-scans each staged diff for secrets; runs the tests and `validate`; shows the commit list; asks y/N;
-then pushes `master` (skipping Entire's pre-push hook, so no checkpoint data is uploaded). Afterwards
+Done through `ace4e9f`. Later commits: from macOS Terminal (an editor's agent shell appends a
+`Co-authored-by` trailer), stage only the named files, `git commit -m ...`, then `git push origin
+master`, hooks left on. Entire's hooks may add an `Entire-Checkpoint:` trailer (and may ask to link
+the commit to a session); with `push_sessions: false` in `.entire/settings.local.json` its pre-push
+hook uploads no checkpoints (`entire status`: "Automatic checkpoint pushing: disabled"). Afterwards
 open https://github.com/CodewithJha/bolibench logged out: README renders, LICENSE shows.
 
 ## 1. Render deploy, read-only first (30 min, required)
+
+**Done 2026-10-18** with `render services create` (not a Blueprint, so `render.yaml` edits are not
+synced): https://bolibench-demo.onrender.com, `srv-dba5nh5g1s2s73asmb5g`, free plan, deploy
+`dep-dba5nhlg1s2s73asmd40` of `ace4e9f` status `live`; smoke tests in `docs/live-verification-report.md`
+3.7. Auto-deploy is on, so pushing `master` redeploys. Cold start seen 12:11:38 IST: the first `GET /`
+took 12.9 s and the logs show the instance starting at 12:11:42 IST; open the URL before recording or
+judging. Still to do: step 4's screenshots. The original Blueprint procedure, for reference:
 
 1. https://dashboard.render.com > **New > Blueprint**, connect GitHub if asked, pick
    `CodewithJha/bolibench`, branch `master`. Render reads `render.yaml`.
@@ -133,7 +136,11 @@ Procedure and expected spans: `docs/integrations/gemma-sentry.md`, "Manual verif
 
 ## 5. ElevenLabs (45 min, $100)
 
-Procedure: `docs/integrations/elevenlabs.md`, "Live verification".
+**Engineering part done 2026-10-18** (free tier, reused key, voice Sarah): live TTS and STT, the live
+test, the CLI with the audio cache on 3 cases, and those 3 cases end to end with local `qwen3:8b`
+(speech 1 pass / 2 fail, text-only 0 / 3). Results: `docs/integrations/elevenlabs.md` "Verified
+results"; row in `docs/live-verification-report.md` 3.7. A full-suite speech run was not done.
+Procedure: `docs/integrations/elevenlabs.md`, "Live verification procedure".
 
 ```sh
 read -rs ELEVENLABS_API_KEY && export ELEVENLABS_API_KEY        # key restricted to TTS + STT, with a quota
@@ -207,11 +214,19 @@ run; the agent itself is not a Temporal workflow.
 Procedure: `docs/integrations/backboard.md`, "Live verification". The category is about comparing
 open-weight models through one key, so enter it only with full-suite runs of **two or more** models.
 
+**Partial on 2026-10-18** (`docs/audits/backboard-2026-10-18.md`): the bridge works against the real
+API (tool-call round trip, memory isolation), but the account has free credit only, which Backboard
+does not let pay for LLM chat, so the chosen open-weight model `qwen/qwen3-235b-a22b-2507` could not
+run. A zero-priced preview model passed 3 of 4 cases. The steps below need paid credit first. The
+bridge now requires `--assistant-id` of a dedicated assistant named `bolibench-*` (the audit kept
+`bolibench-agent`).
+
 ```sh
 read -rs BACKBOARD_API_KEY && export BACKBOARD_API_KEY
 curl -s "https://app.backboard.io/api/models?model_type=llm&supports_tools=true&provider=openrouter&limit=100" \
   -H "X-API-Key: $BACKBOARD_API_KEY" | python3 -c "import json,sys; [print(m['name']) for m in json.load(sys.stdin)['models']]"
-python3 examples/backboard_agent.py --provider openrouter --model <open-weight model A> --port 8002 2> /tmp/bb-agent.log
+python3 examples/backboard_agent.py --assistant-id <bolibench-* assistant id> --provider openrouter \
+  --model <open-weight model A> --port 8002 2> /tmp/bb-agent.log
 uv run bolibench run suites/orders/cancel-single-order.json --agent-url http://127.0.0.1:8002/turn --timeout 180 --output runs/backboard-smoke-2026-10-18/
 uv run bolibench run suites/orders --agent-url http://127.0.0.1:8002/turn --timeout 180 --output runs/backboard-<model-a>-2026-10-18/
 # restart the bridge with model B, then the same full-suite command into runs/backboard-<model-b>-2026-10-18/
@@ -228,35 +243,118 @@ early: DNS and TLS can take hours.
 
 ## 11. Video demo (60 min, required as the backup to the link)
 
-2–3 minutes, screen recording with voice-over, uploaded unlisted (YouTube or similar). Outline:
+About 2.5 minutes, screen recording with voice-over, uploaded unlisted (YouTube or similar). Open
+the Render URL a minute before recording (free-plan cold start). Every number below is from
+`demo/runs/*/summary.json` or the artifact named; say nothing that is not on screen.
 
-1. **0:00–0:20 The problem.** Show the `similar-items-kurta-kurti` case: the customer asks to change
-   the *kurti* order; the agent replies in fluent Hindi that it did. Say: "It reads perfectly. It's wrong."
-2. **0:20–0:45 What BoliBench is.** Twelve Hindi/Hinglish/Awadhi order-support cases; the agent's tool
-   calls go into a sandbox; checks judge the final state, never the reply.
-3. **0:45–1:15 The live demo page** (Render URL): the case-by-run grid, five bundled runs, pass
-   totals per run, click one verdict to open its artifact.
-4. **1:15–1:45 A run comparison.** v1 3/12 → v2 6/12, and the two cases v2 broke by over-asking;
-   gemma3:4b 2/12 because its tool calls were almost-JSON.
-5. **1:45–2:15 One failure with evidence.** In the artifact: `update_quantity` on `ORD-701` (the
-   kurta) with status `ok`, the failed final-state check, the reply claiming the kurti.
-6. **2:15–2:40 Integrations panel.** What is verified and how (local vs hosted), plus whichever hosted
-   evidence exists by then: one live run on Render, a Sentry trace, a speech transcript.
-7. **2:40–2:50 Close.** Repo link, "open source, runs on a laptop".
+| Time | Screen | Say |
+|---|---|---|
+| 0:00–0:15 | `similar-items-kurta-kurti` artifact (qwen3:8b v3) | "The customer says: कुर्ती वाले order की quantity 2 कर दो. The agent answers, in fluent Hindi, that the kurti order is updated. It reads perfectly. It's wrong." |
+| 0:15–0:40 | README / demo page header | "BoliBench is an open-source benchmark for Hindi, Hinglish and Awadhi order-support agents. Twelve cases. The agent's tool calls go to a sandboxed order system, and deterministic checks judge the final state and the calls, never the wording of the reply." |
+| 0:40–1:15 | Demo page grid on https://bolibench-demo.onrender.com | "Five bundled runs, each a single unseeded run on a laptop: qwen3:8b v1 baseline 3 of 12, v2 6, v3 6, gemma3:4b 2, the Mastra agent on qwen3:8b 6. v2 fixed five cases but broke two the baseline passed, Awadhi 'yesterday' and Mohan/Sohan, by asking instead of acting. gemma3:4b in JSON tool mode lost most cases because in 7 of 12 it wrote a tool call the strict parser did not accept." |
+| 1:15–1:50 | Click the kurta/kurti verdict; scroll `tool_calls` and `evaluation.checks` | "The record: `list_orders` returns ORD-701 Kurta and ORD-702 Kurti. Then `update_quantity` on ORD-701, quantity 2, status ok. The checks: final state fail, ORD-701 expected 1 got 2, ORD-702 expected 2 got 1; required action fail, no update on ORD-702; forbidden action fail. Classified entity resolution. Still, the reply calls ORD-701 the kurti. Every one of the five runs fails this case." |
+| 1:50–2:20 | Integrations panel, then `docs/live-verification-report.md` 3.7 | "Each integration is labelled by what was verified. This demo is hosted on Render, read-only, smoke-tested publicly. Gemma, Mastra, Temporal, MongoDB and TimescaleDB ran against the real software on this laptop, not their clouds. Gemma 4 also ran hosted on Google's Gemini API, and ElevenLabs speech ran live; Backboard ran live but only partly, because of billing. DigitalOcean and Sentry are tested offline only." (Update this line only with steps actually finished, e.g. a DigitalOcean run or a Sentry trace.) |
+| 2:20–2:30 | Repo page | "Open source, runs on a laptop with local models. Repo and demo are linked below." |
 
-## 12. Evidence capture list (tick before writing the post)
+## 12. Final evidence checklist (tick before writing the post)
 
-- [ ] Render URL, page screenshot, `/health` output; live-run output (if step 3 done)
-- [ ] DigitalOcean probe output, smoke + suite counts, agent version string
-- [ ] Sentry: trace waterfall, AI Agents view, conversation, error issue without locals, one finding
-- [ ] ElevenLabs: live test lines, `user_input` vs `asr_text`, changed-turn count, usage screenshot
-- [ ] Atlas: Data Explorer screenshot, `--report`
-- [ ] Tiger Cloud: hypertables query, `bolibench_failures`, `--similar` output
-- [ ] Temporal: list, Event History, Attempt 2
-- [ ] Backboard: two summary counts, usage screenshot
-- [ ] .tech URL over HTTPS (optional)
-- [ ] Video URL, plays logged out
+- [ ] Public demo screenshot: https://bolibench-demo.onrender.com showing the grid and the
+      Integrations panel (after the next deploy it should say Render `live-verified (hosted)`)
+- [ ] Render: service page screenshot (name, `free`, region, URL, no Environment tab) and Events or
+      Deploys screenshot with the deploy `live`; `curl -s $BASE/health` output
+- [ ] Video, 2–3 min, plays logged out
+- [ ] Reproducible benchmark comparison. Bundled record: `demo/runs/<label>/summary.json` and the
+      per-case artifacts; provenance (model, agent sha256, source run dir) in `demo/runs/index.json`.
+      Counts (pass/fail/error): `qwen3-8b-baseline-2026-10-17` 3/9/0, `qwen3-8b-agent-v2-2026-10-17`
+      6/6/0, `qwen3-8b-agent-v3-2026-10-17` 6/6/0, `gemma-gemma3-4b-2026-10-17` 2/10/0,
+      `mastra-qwen3-8b-2026-10-17` 6/6/0. Print them:
+
+      ```sh
+      for s in demo/runs/*/summary.json; do python3 -c "import json,sys; print(sys.argv[1].split('/')[2], json.load(open(sys.argv[1]))['counts'])" "$s"; done
+      ```
+
+      Rerun the same procedure (current `examples/ollama_agent.py`, whose sha256 differs from the
+      bundled runs'; unseeded, so expect the same actions on most cases, not identical runs):
+
+      ```sh
+      uv run bolibench validate suites/orders                       # suites/orders: 12 cases ok
+      python3 examples/ollama_agent.py --model qwen3:8b --port 8000                       # terminal 1
+      uv run bolibench run suites/orders --agent-url http://127.0.0.1:8000/turn --timeout 180 \
+        --output runs/qwen3-8b-rerun/                                                     # terminal 2
+      # gemma: restart the agent with --model gemma3:4b --tool-mode json; Mastra: docs/integrations/mastra.md
+      ```
+
+- [ ] One failure with evidence: `demo/runs/qwen3-8b-agent-v3-2026-10-17/similar-items-kurta-kurti.json`.
+      Tool calls: `list_orders {}` (ok: ORD-701 Kurta, ORD-702 Kurti), `update_quantity {"order_id":
+      "ORD-701", "quantity": 2}` (ok). Checks: `final_state` fail ("orders.ORD-701.quantity: expected 1,
+      got 2; orders.ORD-702.quantity: expected 2, got 1"), `required_actions` fail ("no successful call
+      for: update_quantity {'order_id': 'ORD-702', 'quantity': 2}"), `forbidden_actions` fail,
+      `ask_policy` pass, `evidence` pass; classification `entity_resolution` (understanding, likely).
+      The reply says कुर्ती वाले ऑर्डर (ORD-701). Verify:
+
+      ```sh
+      python3 -c "import json; a=json.load(open('demo/runs/qwen3-8b-agent-v3-2026-10-17/similar-items-kurta-kurti.json')); print([(t['tool'], t['args'], t['status']) for t in a['run']['tool_calls']]); print([(c['metric'], c['verdict']) for c in a['evaluation']['checks']])"
+      ```
+
+- [ ] Integrations panel screenshot (`GET /api/integrations`, 12 entries)
+- [ ] Per-sponsor proof, only for categories kept in the post:
+  - [ ] Gemma: `docs/audits/gemma-gemma3-4b-2026-10-17.md`, gemma run counts; hosted Gemma 4 on the Gemini API (`docs/audits/gemma4-gemini-api-2026-10-18.md`, 8/3/1); DO Gemma 4 result if step 3 done
+  - [ ] Mastra: `npm test` 5/5, Mastra run counts
+  - [ ] Temporal: list, Event History, Attempt 2 screenshots (step 8)
+  - [ ] Render: the two screenshots above; live-run output if step 3 done
+  - [ ] DigitalOcean: probe output (key removed), smoke + suite counts, agent version string
+  - [ ] Sentry: trace waterfall, AI Agents view, conversation, error issue without locals, one finding
+  - [ ] ElevenLabs: live test lines, `user_input` vs `asr_text`, changed-turn count, usage screenshot
+  - [ ] Atlas: Data Explorer screenshot, `--report`
+  - [ ] Tiger Cloud: hypertables query, `bolibench_failures`, `--similar` output
+  - [ ] Backboard: two summary counts, usage screenshot
+  - [ ] .tech URL over HTTPS (optional)
 - [ ] Each done step has a row in `docs/live-verification-report.md` 3.7; committed and pushed
+
+### Integration status (2026-10-18 about 13:30 IST; same facts as `docs/sponsor-evidence-matrix.md`)
+
+"Eligible" reads the category text on https://dev.to/challenges/hf26. Status values are defined in
+the matrix.
+
+| Integration | Status | Implemented | Unit-tested | Local service | Real provider | Deployed | Eligible (per official text) |
+|---|---|---|---|---|---|---|---|
+| Gemma | PASS | yes | yes | yes: Ollama `gemma3:4b`, full suite | yes: `gemma-4-31b-it` on Google's Gemini API, full suite 8/3/1 (DigitalOcean not called) | n/a | yes: "run it locally" |
+| Mastra | PASS (local framework) | yes | yes (`npm test` 5/5) | yes: full suite on `qwen3:8b` | n/a (open-source framework) | n/a | yes: "orchestrate an agent over open models" |
+| Temporal | LOCAL ONLY | yes | yes (test server) | yes: dev server, crash + resume | no (no Temporal Cloud; not required) | n/a | with caveat: text says "make your agent durable"; ours makes the evaluation run durable |
+| Render | PASS (read-only) | yes | yes (`tests/test_server.py`) | yes: Docker image | yes: Render hosting | yes, read-only, `ace4e9f`; live mode in progress | yes, weak read-only: text says "AI runtime" or "host an agent's front end"; strong once live mode runs the agent on Render |
+| DigitalOcean | BLOCKED | yes | yes (stub) | OpenAI-compatible client live via Ollama `/v1` and the Gemini API (neither is DigitalOcean) | no (no key) | no (App Platform spec unvalidated) | not yet: needs a real call; text names hosting, GPU Droplets or the Gradient AI Platform |
+| Sentry Agent Tracing | MOCK ONLY | yes | yes (real SDK, in-memory transport) | n/a | no (no dedicated DSN) | n/a | not yet: text asks for traces/screenshots, latency, tokens, cost, a finding |
+| ElevenLabs | PASS | yes | yes (fakes, stub, live test) | n/a | yes: TTS + STT live, 3 cases end to end with local `qwen3:8b` | n/a | fits "transcribe audio for a local model" |
+| MongoDB Atlas | LOCAL ONLY | yes | yes | local MongoDB 7.0.45 | no (no dedicated Atlas cluster) | n/a | not yet: text says "use Atlas" |
+| Tiger Data | LOCAL ONLY | yes | yes | local TimescaleDB + pgvector | no (no dedicated Tiger Cloud service) | n/a | not yet (matrix: only Tiger Cloud counts) |
+| Backboard | PARTIAL | yes | yes (stubs from real responses) | n/a | yes, partly: real API round trip and memory isolation; paid models blocked by billing; free preview model 3 of 4 cases | n/a | not yet: needs ≥2 open-weight models through one key |
+| .tech domain | not started | no | n/a | n/a | no | no | no: needs a claimed domain serving the demo |
+
+### Next two integrations before the deadline
+
+Ranked by value per hour; both need only a free account, and secrets go in the shell
+(`read -rs NAME && export NAME`) or Render's Environment tab, never in chat, files or screenshots.
+
+1. **DigitalOcean (category $200; also upgrades Render to live mode and gives a hosted Gemma 4 result)**
+   about 60 min. Key: Control Panel > Inference (Gradient AI) > Model Access Keys > Create
+   (https://cloud.digitalocean.com/model-studio/manage-keys). Variable: `MODEL_ACCESS_KEY`. Commands:
+   step 3 (model list, probe, then one case and the suite with `--model gemma-4-31B-it --tool-mode json`).
+   Then Render dashboard > `bolibench-demo` > Environment: add `MODEL_ACCESS_KEY` and
+   `BOLIBENCH_DEMO_TOKEN` (`openssl rand -hex 24`); `AGENT_BASE_URL`, `AGENT_MODEL`, `AGENT_TOOL_MODE=json`
+   and `AGENT_API_KEY_ENV=MODEL_ACCESS_KEY` must also be there, because the service was created with the
+   CLI from `render.yaml`'s non-secret values; check before saving. Evidence: model list, probe output, smoke
+   and suite `summary.json` counts, agent version ending `+gemma-4-31B-it+openai-json`, `/health`
+   `"live": true`, one `/api/live-run` output, `rg -F "$MODEL_ACCESS_KEY" runs/ /tmp/do-agent.log` empty.
+2. **Sentry Agent Tracing ($100)** about 45 min, local only (no Render change). Key: sentry.io > new
+   Python project > Project Settings > Client Keys (DSN). Variables: `SENTRY_DSN`, optional
+   `SENTRY_TRACES_SAMPLE_RATE=1.0`. Commands: step 4 (`uv run --extra sentry python
+   examples/ollama_agent.py --model qwen3:8b --port 8000`, then the suite into
+   `runs/sentry-qwen3-8b-2026-10-18/`). Evidence: trace waterfall with `gen_ai.invoke_agent` > `chat` /
+   `execute_tool` and token counts, AI Agents dashboard, one conversation, one finding (latency or
+   tokens), `ORD-201` / `Please cancel` absent from traces; error issue without locals if DO is done.
+
+Why this order: DigitalOcean is a $200 category and its key also makes Render strong; Sentry needs no
+deploy and is the next most direct evidence. ElevenLabs is third (key + voice id, about 45 min).
 
 ## 13. Write and publish the post (Sun 19:30 – 23:00 IST)
 

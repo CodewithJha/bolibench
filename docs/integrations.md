@@ -4,16 +4,24 @@ BoliBench's core (`validate`, `review-sheet`, `run --scripts`, `run --agent-url`
 key and no dependency beyond pydantic. Everything below is opt-in and runs only when invoked. The
 evaluator is the same everywhere; no integration changes a verdict.
 
+Status values: **PASS** (the real service or model was exercised and worked), **PARTIAL** (real
+service exercised, part of it blocked), **LOCAL ONLY** (the sponsor's software on this laptop, not the
+hosted product), **MOCK ONLY** (fakes, stubs or in-memory transports), **BLOCKED** (no credential).
+State on 2026-10-18; evidence in [live-verification-report.md](live-verification-report.md).
+
 | Integration | Entry point | Install | Status | Doc |
 |---|---|---|---|---|
-| ElevenLabs speech round-trip | `bolibench run --speech elevenlabs [--speech-audio-dir DIR]` | none (stdlib) | offline-tested (fakes, local stub); no live call yet | [elevenlabs.md](integrations/elevenlabs.md) |
-| Public demo + live runs | `bolibench serve`, `Dockerfile`, `render.yaml`, `.do/app.yaml` | none (stdlib) | offline-tested; not deployed | [deployment.md](deployment.md) |
-| MongoDB Atlas export | `bolibench export --to mongo ...` | `--extra mongo` | offline-tested (dry run, fakes); live test opt-in, not run | [mongodb-atlas.md](integrations/mongodb-atlas.md) |
-| Tiger Data export + similar failures | `bolibench export --to tiger ...` | `--extra tiger` (+ local Ollama for `--failures`/`--similar`) | offline-tested (dry run, fakes); live test opt-in, not run | [tiger-data.md](integrations/tiger-data.md) |
-| Temporal durable runs | `python -m bolibench.temporal_run worker\|start` | `--extra temporal` | tested on temporalio's local test server; not on Temporal Cloud | [temporal.md](integrations/temporal.md) |
-| OpenAI-compatible backend (DigitalOcean Gemma) + Sentry tracing | `examples/ollama_agent.py --backend openai`, `SENTRY_DSN` | `--extra sentry` (tracing only) | offline-tested (in-memory Sentry transport); no live DSN or hosted endpoint used | [gemma-sentry.md](integrations/gemma-sentry.md), [audit](audits/gemma-gemma3-4b-2026-10-17.md) |
-| Mastra framework agent | `examples/mastra-agent` (`npm start`) | `npm install` | `npm test` offline; one real full-suite run on local `qwen3:8b` | [mastra.md](integrations/mastra.md) |
-| Backboard bridge | `examples/backboard_agent.py` | none (stdlib) | offline stub only | [backboard.md](integrations/backboard.md) |
+| ElevenLabs speech round-trip | `bolibench run --speech elevenlabs [--speech-audio-dir DIR]` | none (stdlib) | **PASS**: live TTS + STT, live test, CLI with audio cache, 3 cases end to end with local `qwen3:8b` | [elevenlabs.md](integrations/elevenlabs.md) |
+| Hosted Gemma 4 via the Gemini API (OpenAI-compatible) | `examples/ollama_agent.py --backend openai --base-url https://generativelanguage.googleapis.com/v1beta/openai --api-key-env GEMINI_API_KEY --reasoning-effort minimal` | none (stdlib) | **PASS**: `gemma-4-31b-it` full suite, 8 pass / 3 fail / 1 error, one run | [gemma-sentry.md](integrations/gemma-sentry.md), [audit](audits/gemma4-gemini-api-2026-10-18.md) |
+| Local Gemma via Ollama | `examples/ollama_agent.py --model gemma3:4b --tool-mode json` | none (stdlib) | **PASS** (local model): full suite 2 / 10 / 0 | [audit](audits/gemma-gemma3-4b-2026-10-17.md) |
+| DigitalOcean serverless inference | `examples/ollama_agent.py --backend openai --base-url https://inference.do-ai.run/v1` | none (stdlib) | **BLOCKED**: no DigitalOcean key; stub-tested only | [gemma-sentry.md](integrations/gemma-sentry.md) |
+| Sentry tracing | `SENTRY_DSN` with `examples/ollama_agent.py` | `--extra sentry` | **MOCK ONLY**: real SDK, in-memory transport; no DSN | [gemma-sentry.md](integrations/gemma-sentry.md) |
+| Backboard bridge | `examples/backboard_agent.py --assistant-id <bolibench-* assistant>` | none (stdlib) | **PARTIAL**: real API round trip and memory isolation work; chosen open-weight model blocked by billing; free preview model 3 of 4 cases | [backboard.md](integrations/backboard.md), [audit](audits/backboard-2026-10-18.md) |
+| Mastra framework agent | `examples/mastra-agent` (`npm start`) | `npm install` | **PASS** (local framework): `npm test`; one full-suite run on local `qwen3:8b`, 6 / 6 / 0 | [mastra.md](integrations/mastra.md) |
+| Temporal durable runs | `python -m bolibench.temporal_run worker\|start` | `--extra temporal` | **LOCAL ONLY**: local test server and dev server (crash + resume); not Temporal Cloud | [temporal.md](integrations/temporal.md) |
+| MongoDB Atlas export | `bolibench export --to mongo ...` | `--extra mongo` | **LOCAL ONLY**: local MongoDB 7.0.45; Atlas needs a new user-created cluster or user | [mongodb-atlas.md](integrations/mongodb-atlas.md) |
+| Tiger Data export + similar failures | `bolibench export --to tiger ...` | `--extra tiger` (+ local Ollama for `--failures`/`--similar`) | **LOCAL ONLY**: local TimescaleDB + pgvector; Tiger Cloud needs a new user-created service | [tiger-data.md](integrations/tiger-data.md) |
+| Public demo + live runs | `bolibench serve`, `Dockerfile`, `render.yaml`, `.do/app.yaml` | none (stdlib) | Render: **PASS**, read-only demo deployed (live mode off there; in progress). DigitalOcean App Platform: **BLOCKED** (no key) | [deployment.md](deployment.md) |
 
 `uv sync --extra all` installs every Python extra. Without an extra, the matching command exits with
 an error naming it; nothing else imports the drivers.
@@ -37,12 +45,15 @@ Secrets are never written to artifacts, logs or error messages.
 | `SENTRY_DSN` (secret) | Sentry | to enable tracing | `examples/ollama_agent.py` `init_sentry` |
 | `SENTRY_TRACES_SAMPLE_RATE` | Sentry | no (`1.0`) | same |
 | `BACKBOARD_API_KEY` (secret) | Backboard | for the bridge | `examples/backboard_agent.py` |
-| `MODEL_ACCESS_KEY` (secret; any name, see `AGENT_API_KEY_ENV`) | DigitalOcean Gradient serverless inference | for live mode | the agent's `--api-key-env` (`examples/ollama_agent.py`) |
+| `--assistant-id <uuid>` (a flag, not a variable) | Backboard | yes, for the bridge: a dedicated assistant whose name starts with `bolibench-`; any other is refused at startup | `examples/backboard_agent.py` `check_assistant` |
+| `GEMINI_API_KEY` (secret; any name, passed by name via `--api-key-env` / `AGENT_API_KEY_ENV`) | Google Gemini API (hosted Gemma 4) | for the hosted Gemma 4 agent | the agent's `--api-key-env` (`examples/ollama_agent.py`) |
+| `MODEL_ACCESS_KEY` (secret; any name, see `AGENT_API_KEY_ENV`) | DigitalOcean Gradient serverless inference | for live mode on DigitalOcean | the agent's `--api-key-env` (`examples/ollama_agent.py`) |
 | `AGENT_BASE_URL`, `AGENT_MODEL`, `AGENT_API_KEY_ENV` | demo deploy | for live mode | `deploy/start.sh` |
 | `AGENT_TOOL_MODE` | demo deploy | no (`native`) | `deploy/start.sh` |
+| `AGENT_REASONING_EFFORT` | demo deploy | no; `minimal` for Gemma 4 on the Gemini API (otherwise its reasoning arrives inside the reply) | `deploy/start.sh`, passed as the agent's `--reasoning-effort` (openai backend only) |
 | `BOLIBENCH_DEMO_TOKEN` (secret) | demo server | for live mode | `server.main` |
 | `BOLIBENCH_LIVE_AGENT_URL` | demo server | set by `deploy/start.sh` | `server.main` |
-| `BOLIBENCH_LIVE_DAILY_CAP`, `BOLIBENCH_LIVE_TURN_TIMEOUT` | demo server | no (`50`, `40`) | `server.main` |
+| `BOLIBENCH_LIVE_DAILY_CAP`, `BOLIBENCH_LIVE_TURN_TIMEOUT`, `BOLIBENCH_LIVE_RUN_TIMEOUT` | demo server | no (`50`, `240` s, `600` s; values in the working tree's `server.py`, which the async live-mode work is still changing) | `server.main` |
 | `BOLIBENCH_CLIENT_IP_HEADER` | demo server | only behind a proxy that sets it | `server.main` |
 | `BOLIBENCH_SUITE`, `BOLIBENCH_DEMO`, `HOST`, `PORT` | demo server | no (`suites/orders`, `demo`, `127.0.0.1`, `8080`) | `server.main` |
 | `MODEL`, `OLLAMA_BASE_URL`, `PORT`, `TURN_TIMEOUT_S` | Mastra example | no | `examples/mastra-agent/src/server.ts` |
@@ -53,7 +64,7 @@ Secrets are never written to artifacts, logs or error messages.
 - Offline, everything at once: `uv run pytest -q` (extras' tests skip), then
   `uv run --with 'sentry-sdk>=2.64' --with pymongo --with 'psycopg[binary]' --with temporalio pytest -q`.
 - Speech: `BOLIBENCH_LIVE=1 uv run pytest -q -s tests/test_speech.py -k live`, then one CLI case with
-  `--speech elevenlabs --speech-audio-dir audio-cache`; see "Live verification" in the doc.
+  `--speech elevenlabs --speech-audio-dir audio-cache`; see "Live verification procedure" in the doc.
 - Exports: `bolibench export --to mongo --dry-run <run dir>` (no network), then the opt-in live tests
   `BOLIBENCH_LIVE=1 ... pytest tests/test_export.py -k live_mongo` / `-k live_tiger`.
 - Temporal: `temporal server start-dev`, a worker, and `start --workflow-id demo-1`; its `summary.json`

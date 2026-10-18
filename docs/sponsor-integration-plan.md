@@ -1,7 +1,7 @@
 # Sponsor integration plan (HF26 Week 2: Side Hustle)
 
 Researched 2026-10-17 from the official pages. Nothing here is a claim that any integration works;
-the Status column says what is true today.
+the Status column says what is true as of its date.
 
 Sources (all fetched 2026-10-17):
 
@@ -40,25 +40,25 @@ Sources (all fetched 2026-10-17):
 9. Optional: DevRelay agent-session embed (https://devrelay.com) is encouraged for all entries; it is
    not a partner category. Entire is the partner category for agent sessions.
 
-## Category status (2026-10-18, IST)
+## Category status (2026-10-18, about 13:30 IST)
 
 Rules re-checked 2026-10-18 00:05 IST: deadline and requirements unchanged. Decisions: a Render deploy
 **and** a video demo; Temporal entered as a durable evaluation run; Tiger Data entered via Tiger Cloud.
-Evidence per row: `docs/sponsor-evidence-matrix.md`; commands and results:
-`docs/live-verification-report.md`; runbook: `docs/submission-checklist.md`.
+Evidence per row: `docs/sponsor-evidence-matrix.md` (which defines the status values); commands and
+results: `docs/live-verification-report.md`; runbook: `docs/submission-checklist.md`.
 
 | Sponsor | What exists | Status | Enter? |
 |---|---|---|---|
-| Gemma | JSON tool mode in the example agent; `gemma3:4b` full suite 2/12 (audited), 3-case rerun with the same actions; EmbeddingGemma in the Tiger exporter; hosted `gemma-4-31B-it` (DigitalOcean) in the deploy configs, JSON tool mode, not called yet | live-verified (local) | yes |
-| Mastra | `examples/mastra-agent` on local `qwen3:8b`, full suite 6/12, 2-case rerun with the same actions | live-verified (local) | yes |
-| Temporal | `python -m bolibench.temporal_run`; local dev server: parity with `bolibench run`, `kill -9` resume (attempt 2), no re-run on restart | live-verified (local); screenshots pending | yes, as a durable **evaluation** run |
-| Render | `render.yaml` + demo page with integrations panel and token-gated live mode; image smoke-tested, Blueprint valid | deploy pending (user) | yes, once deployed |
-| DigitalOcean | `--backend openai` (live (local) via Ollama `/v1`); `.do/app.yaml`; JSON tool mode by default | hosted call pending (user: key) | yes, once called |
-| Sentry Agent Tracing | `gen_ai` agent/chat/tool spans; no local variables on error events | offline-tested; traces pending (user: DSN) | yes, once traced |
-| ElevenLabs | `bolibench run --speech elevenlabs` | offline-tested; live run pending (user: key) | yes, once run |
-| MongoDB Atlas | `bolibench export --to mongo`; live (local) on MongoDB 7.0.45 | Atlas export pending (user: cluster) | yes, once on Atlas |
-| Tiger Data | `bolibench export --to tiger`, pgvector + full-text hybrid search; live (local) on TimescaleDB 2.30.2 + pgvector 0.8.7 | Tiger Cloud export pending (user: service) | yes, once on Tiger Cloud |
-| Backboard | `examples/backboard_agent.py`, checked against the documented schemas | offline-tested; runs pending (user: key, ≥2 models) | yes, once ≥2 models run |
+| Gemma | JSON tool mode and `--reasoning-effort` in the example agent; `gemma3:4b` full suite 2/12 (audited), 3-case rerun with the same actions; EmbeddingGemma in the Tiger exporter; hosted `gemma-4-31b-it` on Google's Gemini API, full suite 8 pass / 3 fail / 1 error (audited) | **PASS** (local + hosted Gemini API) | yes |
+| Mastra | `examples/mastra-agent` on local `qwen3:8b`, full suite 6/12, 2-case rerun with the same actions | **PASS** (local framework) | yes |
+| Temporal | `python -m bolibench.temporal_run`; local dev server: parity with `bolibench run`, `kill -9` resume (attempt 2), no re-run on restart | **LOCAL ONLY**; screenshots pending | yes, as a durable **evaluation** run |
+| Render | `render.yaml` + demo page with integrations panel and token-gated live mode; deployed read-only at https://bolibench-demo.onrender.com (`ace4e9f`), smoke-tested | **PASS** (deployed, read-only; live mode in progress) | yes |
+| DigitalOcean | `--backend openai` (the same client ran live against Ollama `/v1` and the Gemini API, neither DigitalOcean); `.do/app.yaml`; JSON tool mode by default | **BLOCKED** (no key) | yes, once called |
+| Sentry Agent Tracing | `gen_ai` agent/chat/tool spans; no local variables on error events | **MOCK ONLY** (pending a dedicated DSN) | yes, once traced |
+| ElevenLabs | `bolibench run --speech elevenlabs`; live TTS, STT, live test, CLI with cache, 3 cases end to end with local `qwen3:8b` | **PASS** (hosted) | yes |
+| MongoDB Atlas | `bolibench export --to mongo`; live (local) on MongoDB 7.0.45 | **LOCAL ONLY** (Atlas pending user-created credentials) | yes, once on Atlas |
+| Tiger Data | `bolibench export --to tiger`, pgvector + full-text hybrid search; live (local) on TimescaleDB 2.30.2 + pgvector 0.8.7 | **LOCAL ONLY** (Tiger Cloud pending a user-created service) | yes, once on Tiger Cloud |
+| Backboard | `examples/backboard_agent.py` run against the real API: round trip and memory isolation pass; chosen open-weight model blocked by billing; free preview model 3 of 4 cases | **PARTIAL** (billing) | yes, once ≥2 models run |
 | .tech Domain | nothing registered | conditional | only if registered and serving the live demo |
 | Entire | CLI enabled; checkpoints kept local, not pushed | not entered | no |
 | GitHub Copilot | — | not used | no |
