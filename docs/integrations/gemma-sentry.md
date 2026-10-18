@@ -10,8 +10,13 @@ Status: tested offline only (`tests/test_example_agent.py`: fakes, a local HTTP 
 Chat Completions API, with `SENTRY_DSN` pointing at a local envelope sink. `cancel-single-order`
 passed. With a wrong key, the case was `error` and a Sentry error event was sent, and neither the key
 nor the utterance appeared in any envelope. **No live Sentry DSN and no DigitalOcean key were
-available, so no event has reached Sentry and no hosted endpoint has been called.** See "Manual
+available, so no event has reached Sentry and DigitalOcean has not been called.** See "Manual
 verification".
+
+Hosted endpoint verified: on 2026-10-18 the `openai` backend ran the full suite against Gemma 4
+(`gemma-4-31b-it`) on Google's Gemini API OpenAI-compatible endpoint, with native tool calls (8 pass,
+3 fail, 1 error, single run). See "Gemma 4 on the Gemini API" and
+`docs/audits/gemma4-gemini-api-2026-10-18.md`.
 
 ## Flags
 
@@ -22,6 +27,7 @@ verification".
 | `--base-url URL` | `http://127.0.0.1:11434` for ollama; required for openai | must be `https://`, or `http://` only on `127.0.0.1`, `localhost`, `[::1]`; no credentials, query or fragment. For openai include `/v1` (the agent appends `/chat/completions`) |
 | `--api-key-env NAME` | none | the API key is read from environment variable `NAME` and sent as `Authorization: Bearer`. Never a flag value, never printed or logged, not in `Config`'s repr, never sent to the tool gateway. Set but empty = exit with an error naming the variable |
 | `--tool-mode native\|json` | `native` | `native`: the backend's tool calling. `json`: prompt-based tool calls for models without native tools (see below) |
+| `--reasoning-effort none\|minimal\|low\|medium\|high` | not sent | openai backend only (exits with an error for ollama, whose thinking is always off): sent as `reasoning_effort`. Gemma 4 on the Gemini API needs `minimal` (see below). Part of the identity when set |
 | `--sentry-capture-content` | off | send prompts, replies and tool arguments/results to Sentry (see "Privacy"). Exits with an error if `SENTRY_DSN` is unset |
 | `--port` | `8000` | port the agent listens on (`127.0.0.1` only) |
 
@@ -30,8 +36,10 @@ proxy is used.
 
 The agent's self-reported identity (`adapter.self_reported_agent` in artifacts, part of
 `config_id`) is `<sha256[:12] of the file>+<model>`, plus `+<backend>-<tool_mode>` when either is not
-the default. So a gemma json-mode run is `…+gemma3:4b+ollama-json`, and default qwen runs keep the v2
-format. The base URL is not part of the identity: the same model name on two providers looks the same.
+the default, plus `+reasoning-<level>` when `--reasoning-effort` is set. So a gemma json-mode run is
+`…+gemma3:4b+ollama-json`, a Gemini API Gemma 4 run is `…+gemma-4-31b-it+openai-native+reasoning-minimal`,
+and default qwen runs keep the v2 format. The base URL is not part of the identity: the same model
+name on two providers looks the same.
 
 ## Gemma on Ollama
 
@@ -77,12 +85,17 @@ and (native mode) `tools`. Tool calls are read from `choices[0].message.tool_cal
 go back as `{"role": "tool", "tool_call_id": ..., "content": ...}`. Token usage
 (`usage.prompt_tokens`, `completion_tokens`, `total_tokens`) is recorded in Sentry when present.
 
-Each model call is tried once, with a 300 s timeout, and a turn makes at most 8 model calls. A 401,
-429, 5xx, timeout or malformed response ends the turn. BoliBench then records the case as `error`
-(`agent request failed: Remote end closed connection without response`), and the agent's stderr
-holds the traceback (`urllib.error.HTTPError: HTTP Error 401: ...`). A traceback shows source lines,
-not values, so the key is never printed. The 401/429/500/503 paths are tested: one request, no
-retry, and the key is not in the error.
+Each model call has a 300 s timeout, and a turn makes at most 8 model calls. A 429 or 5xx response
+is retried after 2 s and then 5 s (3 attempts in all), and each retry prints one line to stderr
+(`model call: HTTP 500, retrying in 2s`; status code only). Any other HTTP error (401, 400, ...), a
+timeout, a malformed response, or a third 429/5xx ends the turn. BoliBench then records the case as
+`error` (`agent request failed: Remote end closed connection without response`), and the agent's
+stderr holds the traceback (`urllib.error.HTTPError: HTTP Error 401: ...`). A traceback shows source
+lines, not values, so the key is never printed. Tested: 400/401 make one request, 429/500/503 make
+three, a 500 then 429 then success finishes the turn, and the key is not in the error. Retries add
+at most 7 s of waiting per model call plus the extra requests' time, all inside BoliBench's
+`--timeout` for the turn. The retry exists because the Gemini API returned sporadic HTTP 500s for
+Gemma 4 that succeeded on the next attempt (below).
 
 DigitalOcean serverless inference (base URL `https://inference.do-ai.run/v1`, Bearer auth):
 
@@ -121,6 +134,48 @@ DigitalOcean serverless inference (base URL `https://inference.do-ai.run/v1`, Be
 
 A local OpenAI-compatible server (vLLM, llama.cpp, Ollama's own `/v1`) works the same way with
 `--base-url http://127.0.0.1:<port>/v1`, with or without `--api-key-env`.
+
+## Gemma 4 on the Gemini API (verified 2026-10-18)
+
+Google serves the open-weight Gemma 4 models `gemma-4-31b-it` and `gemma-4-26b-a4b-it` on the Gemini
+API (<https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api>), which documents system
+instructions and function calling for them. The OpenAI-compatible base URL is
+`https://generativelanguage.googleapis.com/v1beta/openai` (<https://ai.google.dev/gemini-api/docs/openai>,
+beta), with a Gemini API key from Google AI Studio as the Bearer token.
+
+```sh
+set -a; . ./.env; set +a          # a git-ignored file holding GEMINI_API_KEY=...; never cat it
+python3 examples/ollama_agent.py --backend openai \
+  --base-url https://generativelanguage.googleapis.com/v1beta/openai \
+  --api-key-env GEMINI_API_KEY --model gemma-4-31b-it --tool-mode native --reasoning-effort minimal --port 8765
+uv run bolibench run suites/orders --agent-url http://127.0.0.1:8765/turn --timeout 180 --output runs/
+```
+
+Found by bounded probes (details and status codes in the audit):
+
+- **Native tools work** for both models: `choices[0].message.tool_calls` with a JSON-string
+  `arguments` and an `id`, `finish_reason` `tool_calls`. The system role is accepted, so it does not
+  need to be folded into the user message.
+- **Use `--reasoning-effort minimal`.** Thinking is on by default, and the reasoning comes back
+  inside `content` as a `<thought>…</thought>` prefix. In json mode that makes every tool call
+  unparseable, and in native mode it would leak into the reply. `minimal` turns it off, as the Gemma
+  docs describe. `none` and `low` are rejected with HTTP 400 ("Thinking budget/level is not
+  supported for this model"). With `minimal`, json mode also works: replies were exactly the
+  `{"tool_calls": …}` object.
+- Tool calls carry `extra_content.google.thought_signature`. The agent does not send it back, and
+  follow-up calls with tool results work without it.
+- **Sporadic HTTP 500 `INTERNAL`** errors that succeed on the next attempt. In the audited run, 15
+  model calls got a 500 (3 of them twice), and all recovered within the agent's 3-attempt retry. No
+  429 and no timeout were seen.
+- **Latency:** `gemma-4-31b-it` took 18-51 s per call (with thinking off, too), so a turn with 3
+  model calls can approach a 180 s `--timeout`. One case of the audited run was `error` for that
+  reason. `gemma-4-26b-a4b-it` took 1-5 s per call.
+- Pricing and rate limits for Gemma are not listed on the Gemini API pricing and rate-limit pages
+  (read 2026-10-18). Limits are per project and shown in AI Studio.
+
+Audited run: `runs/gemma4-gemma-4-31b-it-gemini-api-2026-10-18/`, 8 pass, 3 fail, 1 error, single
+unseeded run. See `docs/audits/gemma4-gemini-api-2026-10-18.md` for per-case causes and the
+comparison with local gemma3:4b and qwen3:8b.
 
 ## Sentry AI agent tracing
 
@@ -290,15 +345,17 @@ Add the terminal output of DigitalOcean step 2. Don't screenshot the DSN or the 
 
 ## Limitations
 
-- Tested against stubs only: no live Sentry ingestion or hosted endpoint has been exercised.
+- No live Sentry ingestion has been exercised. The only hosted endpoint exercised is the Gemini API
+  (above); DigitalOcean has not been called.
 - JSON tool mode depends on the model following a text format. A reply that is almost a tool call
   is treated as text by design; how often that happens is a property of the model and prompt, and
   shows in the artifacts as a JSON-looking `agent_reply` with no tool call.
 - `gen_ai.provider.name` for `--backend openai` is the base URL's host (e.g. `inference.do-ai.run`),
   not a canonical provider id. Sentry derives cost from the model name and token counts, so cost
   depends on whether Sentry knows the model's price, not on this field.
-- No streaming, no retries of model calls, one conversation history per process (never evicted).
-- Model-call errors (HTTP errors, timeouts, malformed responses) end the turn with an HTTP connection
+- No streaming; model calls are retried only after a 429 or 5xx (3 attempts in all, fixed 2 s/5 s
+  waits, `Retry-After` ignored); one conversation history per process (never evicted).
+- Model-call errors (HTTP errors after the bounded retry, timeouts, malformed responses) end the turn with an HTTP connection
   close, which BoliBench records as an `error` verdict with no detail. The detail is in the agent's
   stderr and, with Sentry on, in the error event.
 - The base URL is not part of the agent identity or `config_id`.

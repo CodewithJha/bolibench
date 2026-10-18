@@ -10,10 +10,10 @@ The inner adapter (webhook, scripted, or any `AgentAdapter`) only ever receives 
 evaluator does not change: it still judges the sandbox-observed tool calls and final state, and it
 does not depend on which provider made the audio or transcript.
 
-Status: tested offline only, against fakes and a local HTTP stub that answers in the documented
-request/response shapes, including a full `bolibench run --speech elevenlabs` through that stub (as a
-test, and by hand as a separate process on 2026-10-18). **No live ElevenLabs call has been made yet.**
-See "Live verification" below.
+Status: **verified live on 2026-10-18** (free tier, `eleven_multilingual_v2` + `scribe_v2`): real TTS,
+real STT, the CLI path with the audio cache, and one end-to-end run where a local agent acted on the
+transcripts. See "Verified results (2026-10-18)" below. It is also tested offline against fakes and a
+local HTTP stub that answers in the documented request/response shapes.
 
 ## What it measures, and what it doesn't
 
@@ -94,7 +94,10 @@ and file names are hashes, so no utterance or id becomes part of a path.
    text-to-speech and speech-to-text endpoints and set a credit quota
    ([authentication docs](https://elevenlabs.io/docs/api-reference/authentication)).
 2. Pick a voice from your voice library and copy its voice id. Prefer a voice built for Hindi;
-   `eleven_multilingual_v2` will speak Hindi with any voice, but accent quality varies.
+   `eleven_multilingual_v2` will speak Hindi with any voice, but accent quality varies. `GET /v1/voices`
+   lists, per voice, `verified_languages` entries with `language`, `model_id` and `locale`. On
+   2026-10-18, eight premade voices were verified for `hi` / `hi-IN` on `eleven_multilingual_v2`,
+   including Sarah (`EXAVITQu4vr4xnSDxMaL`), which the verified run used.
 3. Export the variables below in your shell. Don't put them in files that might be committed.
 
 | Variable | Required | Default | Meaning |
@@ -148,7 +151,67 @@ text-only run.
 - Don't turn on STT extras such as `keyterms` or `transcript_edit`. They cost extra, and they would
   bias or correct the transcript, which defeats the measurement.
 
-## Live verification (not yet done)
+## Verified results (2026-10-18)
+
+Setup: a free-tier key that had been scoped by permission. It answered `401` on `GET /v1/models`, but
+TTS, STT, `GET /v1/voices` and `GET /v1/user/subscription` all worked. Voice: Sarah
+(`EXAVITQu4vr4xnSDxMaL`, premade, verified `hi-IN` on `eleven_multilingual_v2`). TTS model:
+`eleven_multilingual_v2`, format `mp3_44100_128`, no seed. STT model: `scribe_v2`, auto language
+detection, `tag_audio_events=false`.
+
+| Layer | Result |
+| --- | --- |
+| Auth | PASS. `xi-api-key` was accepted for TTS, STT, voices and subscription. `/v1/models` returned 401 for this key's scope; BoliBench doesn't use it. |
+| TTS | PASS. `200`, `audio/mpeg`, ID3 mp3, 47,272 bytes for the 48-character Awadhi turn. The `character-cost` response header was `48`, so one character is billed per character of text. No `language_code` is needed. |
+| STT | PASS. The multipart `speech.mp3` / `audio/mpeg` upload was accepted. `text` held only the words. `language_code` was `hin`, with probability 0.85 to 0.99. |
+| Errors | PASS. Live error bodies are parsed into readable reasons: `HTTP 404: A voice with voice_id '…' was not found.`, `HTTP 400: 'scribe_v0' is not a valid model_id. Available models: …`, `HTTP 400: File is corrupted. Please ensure it is playable audio.` |
+| Live test | PASS. `BOLIBENCH_LIVE=1 uv run pytest -q -s tests/test_speech.py -k live` gave `1 passed`. |
+| CLI and cache | PASS. Three cases (`awadhi-cancel-yesterday`, `codeswitch-cancel-kurta`, `similar-items-kurta-kurti`) ran with `--scripts --speech elevenlabs`, and a rerun reused the audio: 3 mp3s named `<sha256>.mp3`, `tts_s: null` on the rerun, and identical audio sha256 and transcripts. |
+| End to end | PASS for the pipeline. The `examples/ollama_agent.py` agent (`qwen3:8b`, local Ollama) acted on the transcripts: 1 pass, 2 fail. Speech did not cause the fails (see below). |
+
+Cost: 239 TTS characters (48 for the probe, 48 for the live test, and 143 for the three cases, whose
+audio was then cached). The account's character counter went from 2,272 to 2,541, so 269 in total; the
+other 30 are most likely the STT usage of about 11 clips of roughly 3 to 4 seconds each (not
+confirmed). The scripted and end-to-end reruns used no TTS characters.
+
+What the transcripts showed (utterance, then transcript):
+
+- Awadhi `ऊ वाला order जउन कल मँगाए रहेन, ओका रद्द कइ दें।`
+  - cached audio: `उ वाला order जो उन कल मंगाये रहे हैं, ओ का रद्द कइ दें?`. The Awadhi forms were
+    turned into Hindi (जउन → जो उन, रहेन → रहे हैं, ओका → ओ का). कल survived. The request became a
+    question.
+  - a separate TTS take of the same text (probe): `उ वाला order जो उन कल मंगाये रहे हैं, वो कर द के दे।`.
+    **रद्द (cancel) was lost**, so the request no longer says what to do.
+  - the live test's take: `उ वाला order जुन कल मंगाये रहें ओकर रद्द कइ दें।`.
+  - Unseeded TTS gave three different audio takes of one text, and STT read each one differently.
+    Only cached audio makes a speech run repeatable.
+- `मेरा Kurta वाला order cancel कर दो please, अब नहीं चाहिए।` became `मेरा कुर्ता वाला order cancel कर दो please। अब नहीं चाहिए।`.
+  The Latin-script `Kurta` came back in Devanagari as कुर्ता; `order`, `cancel` and `please` stayed Latin.
+- `कुर्ती वाले order की quantity 2 कर दो।` became `कुर्ती वाले order की quantity two कर दो।`.
+  The digit came back as the English word `two`. कुर्ती stayed कुर्ती, not कुर्ता.
+- No case contained an order id, so how STT handles ids like `ORD-401` is still untested.
+
+Verdicts with the local agent, speech run compared with a text-only run of the same three cases
+(`runs/elevenlabs-qwen3-8b-2026-10-18`, `runs/elevenlabs-qwen3-8b-text-baseline-2026-10-18`):
+
+| Case | Speech | Text only | Cause |
+| --- | --- | --- | --- |
+| `awadhi-cancel-yesterday` | fail: asked which order | fail: listed orders, then asked which order | the agent can't resolve कल to the 2026-10-16 order, with or without speech |
+| `codeswitch-cancel-kurta` | pass | fail: asked for an order id without listing orders | one sample of a non-deterministic model; this doesn't show that speech helped |
+| `similar-items-kurta-kurti` | fail: updated ORD-701 (Kurta) | fail: the same wrong call | the agent confuses Kurta and Kurti; the transcript kept कुर्ती |
+
+With n=1 per case on a non-deterministic model, this shows the pipeline works and gives transcript
+evidence. It is not a speech-robustness score. The scripted run's 3/3 pass says nothing about
+understanding, because the scripted adapter ignores what it hears.
+
+Artifacts (gitignored, under `runs/`): `elevenlabs-audio-2026-10-18/` (3 mp3s),
+`elevenlabs-scripted-2026-10-18/` (the first run and the cached rerun), `elevenlabs-qwen3-8b-2026-10-18/`,
+`elevenlabs-qwen3-8b-text-baseline-2026-10-18/`. A byte scan of all of them, and of every tracked and
+untracked repo file, found no key. Every speech turn has `asr_text` equal to `speech.transcript.text`,
+and each audio file's sha256 and length match the recorded evidence. Nobody has listened to the
+audio yet.
+
+## Live verification procedure
 
 Cost of the whole procedure: under 200 TTS characters and well under a minute of STT audio.
 
@@ -199,13 +262,15 @@ Evidence to keep for the write-up: the terminal output of steps 2 and 3, a scree
 ElevenLabs dashboard's usage view showing the characters and STT time used that day, and the transcript next to the utterance from one artifact. Don't screenshot the
 API keys page.
 
-What only a live run can confirm (the stub follows the docs, but it isn't ElevenLabs):
+Confirmed live on 2026-10-18 (the stub follows the docs, but it isn't ElevenLabs):
 
 - STT accepts the multipart upload sent as `speech.mp3` / `audio/mpeg`, and with
   `tag_audio_events=false` `text` holds only the spoken words.
-- The TTS endpoint accepts `eleven_multilingual_v2` without `language_code`. The docs say that model
-  does not support `language_code`, so none is sent.
-- Error bodies have the documented `detail` shape (the reason in `AdapterError` comes from it).
+- The TTS endpoint accepts `eleven_multilingual_v2` without `language_code`.
+- Error bodies have the documented `detail` shape (the reason in `AdapterError` comes from it), for
+  404 and 400 at least. A 401 or 403 for a key without TTS or STT permission hasn't been seen. If it
+  happens, create a key with the Text to Speech and Speech to Text permissions at
+  <https://elevenlabs.io/app/settings/api-keys>.
 
 ## Key rotation
 
@@ -222,8 +287,13 @@ first. A credit quota on the key limits the damage.
 - The audio is synthetic, as described above. Awadhi TTS and STT quality is unverified, and STT is
   not scored.
 - Only mp3 output formats are allowed, because the STT upload is labelled `audio/mpeg`.
-- TTS and STT are not deterministic, even with `seed`. Only cached audio makes reruns reproducible,
-  and transcripts can still vary between runs.
+- TTS and STT are not deterministic, even with `seed`. Only cached audio makes reruns reproducible.
+  Live, three unseeded takes of one Awadhi sentence gave three different transcripts, and one of them
+  lost the verb रद्द. STT on the same cached audio gave the same transcript on both runs on
+  2026-10-18, but that isn't guaranteed.
+- STT normalizes what it hears: Latin brand or item words can come back in Devanagari (Kurta →
+  कुर्ता), and digits can come back as English words (2 → two). An agent that matches item names or
+  numbers by exact string will see that.
 - No retries. A 429 or 5xx turns the case into `error`; just rerun it. Concurrency limits depend on
   your plan.
 - Only synchronous STT is used: no webhooks, no realtime, no multichannel.
