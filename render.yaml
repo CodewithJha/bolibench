@@ -14,21 +14,29 @@ services:
       # set by Cloudflare in front of Render; X-Forwarded-For keeps client-supplied entries
       - key: BOLIBENCH_CLIENT_IP_HEADER
         value: True-Client-IP
-      # live mode: an open-weight model on DigitalOcean serverless inference (OpenAI-compatible)
+      # live mode: open-weight Gemma 4 hosted on Google's Gemini API (OpenAI-compatible endpoint)
       - key: AGENT_BASE_URL
-        value: https://inference.do-ai.run/v1
-      # open-weight Gemma 4; DigitalOcean's model table does not list tool calling for it
+        value: https://generativelanguage.googleapis.com/v1beta/openai
       - key: AGENT_MODEL
-        value: gemma-4-31B-it
-      # prompt-based tool calls; try native only after the tool-calling probe in docs/deployment.md returns tool_calls
-      - key: AGENT_TOOL_MODE
-        value: json
+        value: gemma-4-31b-it
+      - key: AGENT_TOOL_MODE  # native tool calls verified on this endpoint (docs/deployment.md)
+        value: native
+      - key: AGENT_REASONING_EFFORT  # without it Gemma 4 puts <thought>...</thought> into the reply
+        value: minimal
       - key: AGENT_API_KEY_ENV  # the name of the variable holding the key, not the key
-        value: MODEL_ACCESS_KEY
+        value: GEMINI_API_KEY
+      # Alternative: DigitalOcean serverless inference. Replace the five AGENT_* values above with
+      #   AGENT_BASE_URL=https://inference.do-ai.run/v1  AGENT_MODEL=gemma-4-31B-it  AGENT_TOOL_MODE=json
+      #   AGENT_API_KEY_ENV=MODEL_ACCESS_KEY  (no AGENT_REASONING_EFFORT), and set MODEL_ACCESS_KEY instead.
       - key: BOLIBENCH_LIVE_DAILY_CAP
-        value: "50"
+        value: "20"
+      # runs are async (POST returns 202, the page polls), so they may outlast Render's ~100 s proxy limit
+      - key: BOLIBENCH_LIVE_TURN_TIMEOUT
+        value: "240"
+      - key: BOLIBENCH_LIVE_RUN_TIMEOUT
+        value: "600"
       # secrets: Render prompts for these; leaving either empty keeps live mode off
-      - key: MODEL_ACCESS_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: BOLIBENCH_DEMO_TOKEN  # at least 16 characters, e.g. `openssl rand -hex 24`
         sync: false

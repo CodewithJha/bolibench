@@ -34,12 +34,23 @@ services:
       - key: AGENT_API_KEY_ENV  # the name of the variable holding the key, not the key
         value: MODEL_ACCESS_KEY
         scope: RUN_TIME
+      # Alternative: Gemma 4 on Google's Gemini API, as on Render (render.yaml). Replace the AGENT_* values with
+      #   AGENT_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai  AGENT_MODEL=gemma-4-31b-it
+      #   AGENT_TOOL_MODE=native  AGENT_REASONING_EFFORT=minimal  AGENT_API_KEY_ENV=GEMINI_API_KEY
+      # and add the secret GEMINI_API_KEY instead of MODEL_ACCESS_KEY.
       - key: BOLIBENCH_LIVE_DAILY_CAP
-        value: "50"
+        value: "20"
+        scope: RUN_TIME
+      # runs are async (POST returns 202, the page polls), so they may outlast the proxy's request limit
+      - key: BOLIBENCH_LIVE_TURN_TIMEOUT
+        value: "240"
+        scope: RUN_TIME
+      - key: BOLIBENCH_LIVE_RUN_TIMEOUT
+        value: "600"
         scope: RUN_TIME
       # Secrets are not committed. Add them in the control panel (web component > Environment Variables,
       # tick Encrypt), or uncomment in a local, uncommitted copy before `doctl apps create`:
-      # - key: MODEL_ACCESS_KEY
+      # - key: MODEL_ACCESS_KEY  # or GEMINI_API_KEY for the Gemini alternative
       #   value: <model access key>
       #   type: SECRET
       #   scope: RUN_TIME

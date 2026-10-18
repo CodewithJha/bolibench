@@ -2,7 +2,8 @@
 # Container entrypoint. Live mode: when AGENT_BASE_URL, AGENT_MODEL and AGENT_API_KEY_ENV are set and the
 # variable AGENT_API_KEY_ENV names holds a key, the example agent runs on 127.0.0.1 against that
 # OpenAI-compatible endpoint and the demo server drives it (the server also needs BOLIBENCH_DEMO_TOKEN).
-# Otherwise only the demo server runs and live mode reports itself disabled.
+# AGENT_TOOL_MODE (default native) and AGENT_REASONING_EFFORT (optional; `minimal` for Gemma 4 on the
+# Gemini API) are passed through. Otherwise only the demo server runs and live mode reports itself disabled.
 # If the agent dies later, live runs come back as `error` verdicts; the server keeps serving.
 set -eu
 
@@ -12,7 +13,8 @@ if [ -n "${AGENT_BASE_URL:-}" ] && [ -n "${AGENT_MODEL:-}" ] && [ -n "${AGENT_AP
     && [ -n "$(printenv "$AGENT_API_KEY_ENV" || true)" ]; then
     # the agent never sees the demo token, the server never sees the model key
     env -u BOLIBENCH_DEMO_TOKEN python examples/ollama_agent.py --backend openai --base-url "$AGENT_BASE_URL" \
-        --model "$AGENT_MODEL" --api-key-env "$AGENT_API_KEY_ENV" --tool-mode "${AGENT_TOOL_MODE:-native}" --port "$AGENT_PORT" &
+        --model "$AGENT_MODEL" --api-key-env "$AGENT_API_KEY_ENV" --tool-mode "${AGENT_TOOL_MODE:-native}" \
+        ${AGENT_REASONING_EFFORT:+--reasoning-effort "$AGENT_REASONING_EFFORT"} --port "$AGENT_PORT" &
     export BOLIBENCH_LIVE_AGENT_URL="http://127.0.0.1:$AGENT_PORT/turn"
     exec env -u "$AGENT_API_KEY_ENV" python -m bolibench.server
 fi
