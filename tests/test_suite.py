@@ -24,6 +24,12 @@ def test_orders_suite_is_valid_and_consistent() -> None:
             assert spec.args.get("order_id", next(iter(order_ids))) in order_ids, (case.id, spec)
 
 
+def test_final_state_pins_every_mutable_field_of_every_order() -> None:
+    for case in load_suite(SUITE):
+        paths = {f"orders.{o['id']}.{field}" for o in case.initial_state["orders"] for field in ("status", "quantity")}
+        assert not paths - case.expected.final_state.keys(), (case.id, sorted(paths - case.expected.final_state.keys()))
+
+
 def write(directory: Path, stem: str, **overrides: object) -> Path:
     data = {"id": stem, "status": "proposed", "turns": ["हाँ"], "initial_state": {}, "expected": {}, "provenance": "test"}
     path = directory / f"{stem}.json"

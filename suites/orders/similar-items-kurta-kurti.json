@@ -11,7 +11,12 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-701.quantity": 1, "orders.ORD-702.quantity": 2},
+    "final_state": {
+      "orders.ORD-701.status": "placed",
+      "orders.ORD-701.quantity": 1,
+      "orders.ORD-702.status": "placed",
+      "orders.ORD-702.quantity": 2
+    },
     "required_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-702", "quantity": 2}}],
     "forbidden_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-701"}}]
   },

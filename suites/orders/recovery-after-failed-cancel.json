@@ -14,6 +14,7 @@
     "exclusive_actions": true,
     "final_state": {
       "orders.ORD-121.status": "cancelled",
+      "orders.ORD-121.quantity": 1,
       "orders.ORD-122.status": "placed",
       "orders.ORD-122.quantity": 2,
       "orders.ORD-123.status": "placed",

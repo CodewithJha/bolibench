@@ -17,8 +17,11 @@
     "exclusive_actions": true,
     "final_state": {
       "orders.ORD-901.status": "placed",
+      "orders.ORD-901.quantity": 1,
       "orders.ORD-902.status": "cancelled",
-      "orders.ORD-903.status": "placed"
+      "orders.ORD-902.quantity": 1,
+      "orders.ORD-903.status": "placed",
+      "orders.ORD-903.quantity": 1
     },
     "required_actions": [
       {"tool": "ask_user", "args": {"kind": "clarify"}},

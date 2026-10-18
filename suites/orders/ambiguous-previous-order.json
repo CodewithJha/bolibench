@@ -14,7 +14,12 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-101.status": "cancelled", "orders.ORD-102.status": "placed"},
+    "final_state": {
+      "orders.ORD-101.status": "cancelled",
+      "orders.ORD-101.quantity": 1,
+      "orders.ORD-102.status": "placed",
+      "orders.ORD-102.quantity": 1
+    },
     "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-101"}}],
     "forbidden_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-102"}}],
     "ask_before": {"cancel_order": "confirm"}

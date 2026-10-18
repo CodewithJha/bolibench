@@ -10,7 +10,7 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-201.status": "cancelled"},
+    "final_state": {"orders.ORD-201.status": "cancelled", "orders.ORD-201.quantity": 1},
     "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-201"}}]
   },
   "provenance": "hand-written synthetic"

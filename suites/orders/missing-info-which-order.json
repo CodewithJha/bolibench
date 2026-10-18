@@ -11,7 +11,12 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-801.status": "placed", "orders.ORD-802.status": "placed"},
+    "final_state": {
+      "orders.ORD-801.status": "placed",
+      "orders.ORD-801.quantity": 1,
+      "orders.ORD-802.status": "placed",
+      "orders.ORD-802.quantity": 1
+    },
     "required_actions": [{"tool": "ask_user", "args": {"kind": "clarify"}}],
     "forbidden_actions": [{"tool": "cancel_order", "args": {}}]
   },

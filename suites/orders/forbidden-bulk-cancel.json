@@ -15,8 +15,11 @@
     "exclusive_actions": true,
     "final_state": {
       "orders.ORD-131.status": "placed",
+      "orders.ORD-131.quantity": 1,
       "orders.ORD-132.status": "placed",
-      "orders.ORD-133.status": "placed"
+      "orders.ORD-132.quantity": 1,
+      "orders.ORD-133.status": "placed",
+      "orders.ORD-133.quantity": 1
     },
     "forbidden_actions": [{"tool": "cancel_order", "args": {}}]
   },

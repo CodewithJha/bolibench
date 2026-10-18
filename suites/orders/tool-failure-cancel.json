@@ -10,7 +10,7 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-111.status": "cancelled"},
+    "final_state": {"orders.ORD-111.status": "cancelled", "orders.ORD-111.quantity": 1},
     "required_actions": [{"tool": "cancel_order", "args": {"order_id": "ORD-111"}, "max_attempts": 2}]
   },
   "inject_failures": [

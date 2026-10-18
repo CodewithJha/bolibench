@@ -11,7 +11,12 @@
   },
   "expected": {
     "exclusive_actions": true,
-    "final_state": {"orders.ORD-501.quantity": 3, "orders.ORD-502.quantity": 1},
+    "final_state": {
+      "orders.ORD-501.status": "placed",
+      "orders.ORD-501.quantity": 3,
+      "orders.ORD-502.status": "placed",
+      "orders.ORD-502.quantity": 1
+    },
     "required_actions": [{"tool": "update_quantity", "args": {"order_id": "ORD-501", "quantity": 3}}],
     "forbidden_actions": [
       {"tool": "update_quantity", "args": {"order_id": "ORD-501", "quantity": 2}},
