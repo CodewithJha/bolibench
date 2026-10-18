@@ -63,6 +63,13 @@ def test_injected_failure_hits_nth_call_and_leaves_state_unchanged() -> None:
     assert sb.state["orders"][1]["status"] == "cancelled"
 
 
+def test_injected_failure_counts_every_call_and_precedes_argument_checks() -> None:
+    sb = OrderSandbox(initial(), [InjectedFailure(tool="cancel_order", call=1, error="503 busy")])
+    malformed = sb.call("cancel_order", 0, id="ORD-1")
+    assert (malformed.status, malformed.error) == ("injected_failure", "503 busy")
+    assert sb.call("cancel_order", 0, order_id="ORD-1").status == "ok"
+
+
 def test_initial_state_and_results_are_not_aliased() -> None:
     state = initial()
     sb = OrderSandbox(state)
