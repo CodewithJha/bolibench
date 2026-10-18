@@ -7,6 +7,9 @@ OpenAI-compatible /v1/chat/completions endpoint (`--base-url`, e.g. https://infe
 The API key is read only from the environment variable named by `--api-key-env` and never logged.
 Tool mode (`--tool-mode`): `native` uses the backend's tool calling; `json` is for models without it
 (e.g. gemma3 on Ollama): the prompt asks for a JSON tool call as the whole reply, parsed strictly.
+`--reasoning-effort` (openai only) is sent as `reasoning_effort`; Gemma 4 on the Gemini API needs
+`minimal`, or its reasoning comes back inside `content` as a `<thought>...</thought>` prefix.
+Model calls are retried after a 429 or 5xx, at most twice; anything else fails the turn at once.
 Tracing: Sentry AI agent spans only when SENTRY_DSN is set (needs `sentry-sdk`); prompts, replies and
 tool arguments/results are sent only with `--sentry-capture-content`.
 
@@ -21,6 +24,9 @@ import hashlib
 import json
 import os
 import re
+import sys
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -33,6 +39,9 @@ from urllib.parse import urlsplit
 NAME = "bolibench-example-ollama-agent"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 ENDPOINTS = {"ollama": "/api/chat", "openai": "/chat/completions"}
+REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"]
+RETRY_STATUS = {429, 500, 502, 503, 504}
+RETRY_DELAYS = (2.0, 5.0)  # seconds before the 2nd and 3rd attempt; a turn must stay inside BoliBench's deadline
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -78,6 +87,7 @@ class Config:
     tool_mode: str = "native"
     api_key: str | None = field(default=None, repr=False)  # never logged
     capture_content: bool = False
+    reasoning_effort: str | None = None
 
 
 def dumps(value: Any) -> str:
@@ -91,6 +101,18 @@ def post(url: str, payload: dict[str, Any], timeout: float, api_key: str | None 
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
     with OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read())
+
+
+def post_model(cfg: Config, body: dict[str, Any]) -> Any:
+    """post() to the model, retried after a 429 or 5xx response only (not timeouts or other errors)."""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return post(cfg.url, body, 300, cfg.api_key)
+        except urllib.error.HTTPError as e:
+            if delay is None or e.code not in RETRY_STATUS:
+                raise
+            print(f"model call: HTTP {e.code}, retrying in {delay:g}s", file=sys.stderr, flush=True)
+        time.sleep(delay)
 
 
 def check_base_url(url: str) -> str:
@@ -128,12 +150,15 @@ def json_tool_prompt(tools: dict[str, list[str]]) -> str:
     return JSON_TOOLS + " ".join(specs)
 
 
-def identity(model: str, backend: str = "ollama", tool_mode: str = "native") -> dict[str, str]:
+def identity(model: str, backend: str = "ollama", tool_mode: str = "native", reasoning_effort: str | None = None) -> dict[str, str]:
     """Self-reported identity for BoliBench's artifacts: this file's sha256 prefix plus the model name,
-    plus backend and tool mode unless they are the defaults (so default runs keep the v2 format)."""
+    plus backend and tool mode unless they are the defaults (so default runs keep the v2 format),
+    plus the reasoning effort when one is set."""
     version = f"{hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]}+{model}"
     if (backend, tool_mode) != ("ollama", "native"):
         version += f"+{backend}-{tool_mode}"
+    if reasoning_effort:
+        version += f"+reasoning-{reasoning_effort}"
     return {"name": NAME, "version": version}
 
 
@@ -259,11 +284,13 @@ def chat(cfg: Config, messages: list[dict[str, Any]], tools: list[dict[str, Any]
         body["tools"] = tools
     if cfg.backend == "ollama":
         body["think"] = False
+    if cfg.reasoning_effort:
+        body["reasoning_effort"] = cfg.reasoning_effort
     data = {"gen_ai.operation.name": "chat", "gen_ai.agent.name": NAME, "gen_ai.request.model": cfg.model, "gen_ai.provider.name": provider(cfg)}
     if cfg.capture_content:
         data |= {"gen_ai.system_instructions": messages[0]["content"], "gen_ai.input.messages": dumps(messages[1:])}
     with span("gen_ai.chat", f"chat {cfg.model}", data) as chat_span:
-        response = post(cfg.url, body, 300, cfg.api_key)
+        response = post_model(cfg, body)
         message = parse_reply(cfg, response)
         calls, done = plan(message)
         messages.append(assistant_message(cfg, message["content"], calls))
@@ -319,7 +346,7 @@ def turn(req: dict[str, Any], cfg: Config) -> str:
         return agent_turn(req, cfg)
     # gen_ai spans are only sent inside a transaction; this one is the webhook request itself
     with sentry.isolation_scope(), sentry.start_transaction(op="http.server", name="POST /turn") as transaction:
-        agent = identity(cfg.model, cfg.backend, cfg.tool_mode)
+        agent = identity(cfg.model, cfg.backend, cfg.tool_mode, cfg.reasoning_effort)
         for key, value in {"model": cfg.model, "agent.version": agent["version"], "backend": cfg.backend, "tool_mode": cfg.tool_mode}.items():
             transaction.set_tag(key, value)
         sentry.ai.set_conversation_id(req["conversation"])
@@ -358,12 +385,14 @@ def init_sentry(environ: Mapping[str, str], capture_content: bool) -> Any:
 def config(args: argparse.Namespace, environ: Mapping[str, str]) -> Config:
     if args.backend == "openai" and args.base_url is None:
         raise SystemExit("--backend openai needs --base-url, e.g. https://inference.do-ai.run/v1")
+    if args.backend != "openai" and args.reasoning_effort is not None:
+        raise SystemExit("--reasoning-effort needs --backend openai (ollama thinking is always off)")
     try:
         base = check_base_url(args.base_url or "http://127.0.0.1:11434")
     except ValueError as e:
         raise SystemExit(str(e)) from None
     return Config(args.model, args.backend, base + ENDPOINTS[args.backend], args.tool_mode,
-                  read_api_key(args.api_key_env, environ), args.sentry_capture_content)
+                  read_api_key(args.api_key_env, environ), args.sentry_capture_content, args.reasoning_effort)
 
 
 def main() -> None:
@@ -375,11 +404,12 @@ def main() -> None:
     parser.add_argument("--base-url", help="default http://127.0.0.1:11434 (ollama); required for openai, e.g. https://inference.do-ai.run/v1")
     parser.add_argument("--api-key-env", metavar="NAME", help="environment variable holding the API key (sent as a Bearer token)")
     parser.add_argument("--tool-mode", choices=["native", "json"], default="native")
+    parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, help="openai only: sent as reasoning_effort (Gemma 4 on the Gemini API: minimal)")
     parser.add_argument("--sentry-capture-content", action="store_true", help="send prompts, replies and tool arguments/results to Sentry")
     args = parser.parse_args()
     cfg = config(args, os.environ)
     sentry = init_sentry(os.environ, cfg.capture_content)
-    agent = identity(cfg.model, cfg.backend, cfg.tool_mode)
+    agent = identity(cfg.model, cfg.backend, cfg.tool_mode, cfg.reasoning_effort)
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:

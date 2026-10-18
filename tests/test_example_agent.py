@@ -46,7 +46,9 @@ def test_identity_names_a_non_default_backend_or_tool_mode() -> None:
     digest = hashlib.sha256(Path(agent.__file__).read_bytes()).hexdigest()[:12]
     assert agent.identity("gemma3:4b", "ollama", "json")["version"] == f"{digest}+gemma3:4b+ollama-json"
     assert agent.identity("m", "openai", "native")["version"] == f"{digest}+m+openai-native"
+    assert agent.identity("gemma-4-31b-it", "openai", "native", "minimal")["version"] == f"{digest}+gemma-4-31b-it+openai-native+reasoning-minimal"
     AgentIdentity.model_validate(agent.identity("gemma3:4b", "openai", "json"))
+    AgentIdentity.model_validate(agent.identity("gemma-4-31b-it", "openai", "json", "minimal"))
 
 
 def test_ask_user_ends_the_turn_and_drops_later_calls() -> None:
@@ -119,7 +121,8 @@ def test_api_key_comes_only_from_the_named_env_var_and_is_never_shown() -> None:
 
 
 def args(**kw: Any) -> Any:
-    defaults = {"model": "m", "backend": "ollama", "base_url": None, "api_key_env": None, "tool_mode": "native", "sentry_capture_content": False}
+    defaults = {"model": "m", "backend": "ollama", "base_url": None, "api_key_env": None, "tool_mode": "native",
+                "sentry_capture_content": False, "reasoning_effort": None}
     return type("Args", (), defaults | kw)()
 
 
@@ -131,6 +134,8 @@ def test_config_builds_endpoints_and_requires_a_base_url_for_openai() -> None:
         agent.config(args(backend="openai"), {})
     with pytest.raises(SystemExit, match="https"):
         agent.config(args(backend="openai", base_url="http://inference.do-ai.run/v1"), {})
+    with pytest.raises(SystemExit, match="--reasoning-effort needs --backend openai"):
+        agent.config(args(reasoning_effort="minimal"), {})
 
 
 class FakeBackend:
@@ -214,24 +219,47 @@ def test_openai_backend_speaks_chat_completions_with_a_bearer_key() -> None:
     assert [s["auth"] for s in seen] == ["Bearer sk-secret", None, "Bearer sk-secret"]  # the key never goes to the tool gateway
     assert [s["body"] for s in seen if s["path"] != "/v1/chat/completions"] == [{"tool": "list_orders", "args": {}}]
     body = model_calls[1]["body"]
-    assert "think" not in body and body["stream"] is False and body["tools"][0]["function"]["name"] == "list_orders"
+    assert "think" not in body and "reasoning_effort" not in body and body["stream"] is False and body["tools"][0]["function"]["name"] == "list_orders"
     assert body["messages"][-2:] == [
         {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "list_orders", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "call_1", "content": json.dumps({"ok": True, "result": [{"id": "ORD-1"}], "error": None})},
     ]
 
 
-def openai_cfg(base: str) -> Any:
-    return agent.config(args(backend="openai", base_url=base + "/v1", api_key_env="K"), {"K": "sk-secret"})
+def openai_cfg(base: str, **kw: Any) -> Any:
+    return agent.config(args(backend="openai", base_url=base + "/v1", api_key_env="K", **kw), {"K": "sk-secret"})
 
 
-@pytest.mark.parametrize("status", [401, 429, 500, 503])
-def test_openai_http_errors_fail_the_turn_once_without_the_key(status: int) -> None:
-    with fake_openai_server([status]) as (base, seen):
+def reply(content: str) -> dict[str, Any]:
+    return {"model": "gemma-4-31b-it", "choices": [{"message": {"role": "assistant", "content": content}}]}
+
+
+@pytest.fixture
+def no_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent, "RETRY_DELAYS", (0.0, 0.0))
+
+
+@pytest.mark.parametrize(("status", "attempts"), [(400, 1), (401, 1), (429, 3), (500, 3), (503, 3)])
+def test_openai_http_errors_fail_the_turn_after_bounded_retries_without_the_key(no_retry_wait: None, status: int, attempts: int) -> None:
+    with fake_openai_server([status] * attempts) as (base, seen):
         with pytest.raises(urllib.error.HTTPError) as e:
             agent.turn(request(f"openai-{status}") | {"tools_url": base + "/runs/t/tools"}, openai_cfg(base))
-    assert e.value.code == status and len(seen) == 1  # no retry
+    assert e.value.code == status and len(seen) == attempts  # 4xx other than 429: no retry; 429/5xx: 3 attempts in all
     assert "sk-secret" not in str(e.value) and "sk-secret" not in repr(e.value)
+
+
+def test_openai_transient_errors_are_retried_then_the_turn_goes_on(no_retry_wait: None, capsys: pytest.CaptureFixture[str]) -> None:
+    with fake_openai_server([500, 429, reply("ठीक है")]) as (base, seen):
+        assert agent.turn(request("openai-retry") | {"tools_url": base + "/runs/t/tools"}, openai_cfg(base)) == "ठीक है"
+    assert len(seen) == 3 and seen[0]["body"] == seen[2]["body"]
+    assert capsys.readouterr().err == "model call: HTTP 500, retrying in 0s\nmodel call: HTTP 429, retrying in 0s\n"
+
+
+def test_reasoning_effort_is_sent_only_when_set() -> None:
+    with fake_openai_server([reply("ठीक है")]) as (base, seen):
+        cfg = openai_cfg(base, reasoning_effort="minimal")
+        assert agent.turn(request("openai-effort") | {"tools_url": base + "/runs/t/tools"}, cfg) == "ठीक है"
+    assert seen[0]["body"]["reasoning_effort"] == "minimal" and cfg.reasoning_effort == "minimal"
 
 
 class FakeSpan:
