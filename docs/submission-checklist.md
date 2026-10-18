@@ -44,7 +44,11 @@ synced): https://bolibench-demo.onrender.com, `srv-dba5nh5g1s2s73asmb5g`, free p
 `dep-dba5nhlg1s2s73asmd40` of `ace4e9f` status `live`; smoke tests in `docs/live-verification-report.md`
 3.7. Auto-deploy is on, so pushing `master` redeploys. Cold start seen 12:11:38 IST: the first `GET /`
 took 12.9 s and the logs show the instance starting at 12:11:42 IST; open the URL before recording or
-judging. Still to do: step 4's screenshots. The original Blueprint procedure, for reference:
+judging. Still to do: step 4's screenshots. That service is now suspended on its old workspace
+(billing). **Redeployed 2026-10-18 22:48 IST** on a new Render workspace with the REST API, live mode
+on: https://bolibench-demo-1b3o.onrender.com, `srv-dbafue7btjjs73f13di0`, free plan, commit
+`3440507`; one hosted live run passed (`docs/live-verification-report.md` 3.7). Use this URL below.
+The original Blueprint procedure, for reference:
 
 1. https://dashboard.render.com > **New > Blueprint**, connect GitHub if asked, pick
    `CodewithJha/bolibench`, branch `master`. Render reads `render.yaml`.
@@ -251,14 +255,14 @@ the Render URL a minute before recording (free-plan cold start). Every number be
 |---|---|---|
 | 0:00–0:15 | `similar-items-kurta-kurti` artifact (qwen3:8b v3) | "The customer says: कुर्ती वाले order की quantity 2 कर दो. The agent answers, in fluent Hindi, that the kurti order is updated. It reads perfectly. It's wrong." |
 | 0:15–0:40 | README / demo page header | "BoliBench is an open-source benchmark for Hindi, Hinglish and Awadhi order-support agents. Twelve cases. The agent's tool calls go to a sandboxed order system, and deterministic checks judge the final state and the calls, never the wording of the reply." |
-| 0:40–1:15 | Demo page grid on https://bolibench-demo.onrender.com | "Five bundled runs, each a single unseeded run on a laptop: qwen3:8b v1 baseline 3 of 12, v2 6, v3 6, gemma3:4b 2, the Mastra agent on qwen3:8b 6. v2 fixed five cases but broke two the baseline passed, Awadhi 'yesterday' and Mohan/Sohan, by asking instead of acting. gemma3:4b in JSON tool mode lost most cases because in 7 of 12 it wrote a tool call the strict parser did not accept." |
+| 0:40–1:15 | Demo page grid on https://bolibench-demo-1b3o.onrender.com | "Five bundled runs, each a single unseeded run on a laptop: qwen3:8b v1 baseline 3 of 12, v2 6, v3 6, gemma3:4b 2, the Mastra agent on qwen3:8b 6. v2 fixed five cases but broke two the baseline passed, Awadhi 'yesterday' and Mohan/Sohan, by asking instead of acting. gemma3:4b in JSON tool mode lost most cases because in 7 of 12 it wrote a tool call the strict parser did not accept." |
 | 1:15–1:50 | Click the kurta/kurti verdict; scroll `tool_calls` and `evaluation.checks` | "The record: `list_orders` returns ORD-701 Kurta and ORD-702 Kurti. Then `update_quantity` on ORD-701, quantity 2, status ok. The checks: final state fail, ORD-701 expected 1 got 2, ORD-702 expected 2 got 1; required action fail, no update on ORD-702; forbidden action fail. Classified entity resolution. Still, the reply calls ORD-701 the kurti. Every one of the five runs fails this case." |
 | 1:50–2:20 | Integrations panel, then `docs/live-verification-report.md` 3.7 | "Each integration is labelled by what was verified. This demo is hosted on Render, read-only, smoke-tested publicly. Gemma, Mastra, Temporal, MongoDB and TimescaleDB ran against the real software on this laptop, not their clouds. Gemma 4 also ran hosted on Google's Gemini API, and ElevenLabs speech ran live; Backboard ran live but only partly, because of billing. DigitalOcean and Sentry are tested offline only." (Update this line only with steps actually finished, e.g. a DigitalOcean run or a Sentry trace.) |
 | 2:20–2:30 | Repo page | "Open source, runs on a laptop with local models. Repo and demo are linked below." |
 
 ## 12. Final evidence checklist (tick before writing the post)
 
-- [ ] Public demo screenshot: https://bolibench-demo.onrender.com showing the grid and the
+- [ ] Public demo screenshot: https://bolibench-demo-1b3o.onrender.com showing the grid and the
       Integrations panel (after the next deploy it should say Render `live-verified (hosted)`)
 - [ ] Render: service page screenshot (name, `free`, region, URL, no Environment tab) and Events or
       Deploys screenshot with the deploy `live`; `curl -s $BASE/health` output

@@ -83,7 +83,7 @@
       "category": "deploy",
       "status": "live-verified (hosted)",
       "evidence": "render.yaml, Dockerfile, deploy/start.sh, docs/deployment.md, docs/live-verification-report.md",
-      "note": "Deployed on 2026-10-18 to https://bolibench-demo.onrender.com (free plan, Singapore, commit ace4e9f); /health ok and every endpoint check in docs/deployment.md passed publicly. Read-only demo: live mode is off (no model key or demo token set on the service); hosted live mode is still in progress."
+      "note": "Deployed on 2026-10-18 to https://bolibench-demo-1b3o.onrender.com (free plan, Singapore, commit 3440507) with token-gated live mode on: the container runs the example agent on Gemma 4 (gemma-4-31b-it) via Google's Gemini API. Public endpoint checks passed; one hosted live run (cancel-single-order) passed in 35 s. The earlier read-only service is suspended and no longer used."
     },
     {
       "name": "DigitalOcean App Platform deploy",

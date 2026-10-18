@@ -362,8 +362,9 @@ claim is backed by `docs/live-verification-report.md` or the linked audit.
 - Tiger Data export with similar-failure search (`export --to tiger`, extra `tiger`): local only
   (TimescaleDB + pgvector); Tiger Cloud not run. `docs/integrations/tiger-data.md`
 - Public demo and token-gated live runs (`bolibench serve`, Docker, Render, DigitalOcean App
-  Platform): read-only demo deployed on Render (https://bolibench-demo.onrender.com); live mode off
-  there for now; DigitalOcean App Platform not deployed (no key). `docs/deployment.md`
+  Platform): demo deployed on Render (https://bolibench-demo-1b3o.onrender.com) with token-gated
+  live mode on (Gemma 4 on the Gemini API); DigitalOcean App Platform not deployed (no key).
+  `docs/deployment.md`
 
 ## Benchmark audit
 

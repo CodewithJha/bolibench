@@ -15,9 +15,13 @@ Why async: a hosted-model turn can take up to ~180 s (provider latency plus the 
 429/5xx), and Render's proxy cuts a request at about 100 s, so a synchronous request could not return
 a slow run's result.
 
-The read-only demo is live on Render's free plan at https://bolibench-demo.onrender.com (service
-`srv-dba5nh5g1s2s73asmb5g`, created with `render services create`, so `render.yaml` changes are not
-synced automatically); live mode is off and no domain is registered. Render is the primary target.
+The demo is live on Render's free plan at https://bolibench-demo-1b3o.onrender.com (service
+`srv-dbafue7btjjs73f13di0`, region Singapore, created on 2026-10-18 with Render's REST API
+`POST /v1/services`, so `render.yaml` changes are not synced automatically) with token-gated live mode on
+(Gemma 4 `gemma-4-31b-it` on the Gemini API); no domain is registered. Render added the `-1b3o` suffix
+because `bolibench-demo.onrender.com` was taken. The earlier read-only service
+(`srv-dba5nh5g1s2s73asmb5g`, https://bolibench-demo.onrender.com) is suspended on an old Render workspace
+(billing) and no longer used. Render is the primary target.
 The DigitalOcean App Platform spec is an optional alternative: maintaining both is not required.
 
 Checked locally on 2026-10-18: `docker build` then `docker run --read-only -p 10000:10000 -e PORT=10000`
@@ -205,8 +209,9 @@ Read-only demo first (no secrets needed):
    `https://<service>.onrender.com` URL the service page shows (`bolibench-demo.onrender.com` if
    the name is free) and run the checks under "Verify a deployment".
 
-Enable live mode later (Gemini). The running service was created from the CLI, so `render.yaml` is
-not applied to it; its environment is set directly:
+Enable live mode later (Gemini). The running service was created with the REST API with all of these
+variables already set (live mode on since its first deploy), so `render.yaml` is not applied to it;
+to change its environment, set it directly:
 
 1. Push the async live-mode code to `master` first (auto-deploy builds it), so live mode never starts
    on the old synchronous endpoint.
@@ -218,11 +223,11 @@ not applied to it; its environment is set directly:
    Render's REST API, `PUT https://api.render.com/v1/services/<service id>/env-vars/<KEY>` with body
    `{"value": "..."}` (the Render CLI 2.28 has no env-var command); API changes take effect on the
    next deploy: `render deploys create <service id> --confirm`.
-3. `curl -s https://bolibench-demo.onrender.com/health` shows `"live": true`; then trigger a run:
+3. `curl -s https://bolibench-demo-1b3o.onrender.com/health` shows `"live": true`; then trigger a run:
 
 ```sh
 TOKEN=$(sed -n 's/^BOLIBENCH_DEMO_TOKEN=//p' .env)   # from the local .env; never echo it
-BASE=https://bolibench-demo.onrender.com
+BASE=https://bolibench-demo-1b3o.onrender.com
 RUN=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -d '{"case_id": "cancel-single-order"}' $BASE/api/live-run \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')
 while sleep 5; do
