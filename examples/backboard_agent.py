@@ -1,11 +1,14 @@
 """Example local agent for `bolibench run --agent-url` whose model runs on Backboard (backboard.io): each
 turn is a Backboard thread message with tool definitions, and every tool call Backboard asks for is
 executed only through the turn's `tools_url`, then its result is submitted back. Stdlib only. Same
-prompt and tool schemas as examples/ollama_agent.py. An example, not part of the package; tested
-offline against a stub only, never against the real Backboard API.
+prompt and tool schemas as examples/ollama_agent.py. An example, not part of the package; run against
+the real API on 2026-10-18 (docs/audits/backboard-2026-10-18.md) and tested offline against a stub.
+
+Every case starts a new thread on a dedicated assistant whose name must start with `bolibench-`:
+without `assistant_id` Backboard would use the account's first assistant, with its documents.
 
     export BACKBOARD_API_KEY=...                   # read from the environment only, never logged
-    python examples/backboard_agent.py --provider openrouter --model qwen/qwen3-235b-a22b-2507 --port 8000
+    python examples/backboard_agent.py --assistant-id <uuid> --provider openrouter --model qwen/qwen3-235b-a22b-2507 --port 8000
     uv run bolibench run suites/orders --agent-url http://127.0.0.1:8000/turn --timeout 180
 """
 
@@ -32,18 +35,27 @@ threads: dict[str, str] = {}  # BoliBench conversation -> Backboard thread_id; p
 
 
 class Backboard:
-    def __init__(self, api_key: str, provider: str, model: str, base: str = API) -> None:
-        self.provider, self.model, self.base = provider, model, base
+    def __init__(self, api_key: str, assistant: str, provider: str, model: str, base: str = API) -> None:
+        self.assistant, self.provider, self.model, self.base = assistant, provider, model, base
         self._headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
 
     def __repr__(self) -> str:  # keeps the key out of tracebacks and logs
-        return f"Backboard({self.provider}/{self.model} at {self.base})"
+        return f"Backboard({self.assistant} {self.provider}/{self.model} at {self.base})"
 
-    def send(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        data = json.dumps(payload, ensure_ascii=False).encode()
-        request = urllib.request.Request(self.base + path, data=data, headers=self._headers, method="POST")
+    def send(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """POST `payload` as JSON, or GET when it is None."""
+        data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode()
+        request = urllib.request.Request(self.base + path, data=data, headers=self._headers, method="GET" if data is None else "POST")
         with OPENER.open(request, timeout=150) as response:
             return json.loads(response.read())
+
+
+def check_assistant(backboard: Backboard) -> str:
+    """The assistant's name; refuses any assistant not named `bolibench-*` (it may belong to another app)."""
+    name = str(backboard.send(f"/assistants/{backboard.assistant}").get("name"))
+    if not name.startswith("bolibench-"):
+        raise SystemExit(f"assistant {backboard.assistant} is named {name!r}: use a dedicated assistant named bolibench-*")
+    return name
 
 
 def identity(provider: str, model: str) -> dict[str, str]:
@@ -74,33 +86,44 @@ def turn(req: dict[str, Any], backboard: Backboard) -> str:
         "tools": [schema(name, params) for name, params in req["tools"].items()],
         "llm_provider": backboard.provider,
         "model_name": backboard.model,
-        "memory": "off",
+        "memory": "off",  # memory is shared by all threads of an assistant: on, facts would leak across cases
         "stream": False,
     }
     if req["turn"] > 0:
         message["thread_id"] = threads[req["conversation"]]
+    else:  # a new thread for every case
+        message["assistant_id"] = backboard.assistant
     response = backboard.send("/threads/messages", message)
     thread = threads[req["conversation"]] = response["thread_id"]
+    run = response.get("run_id")
     question: str | None = None  # set once ask_user ran: the turn is over, later calls are not sent
+    answered: dict[str, str] = {}  # tool_call_id -> output; a run's tool_calls repeat every earlier call of the run
     for _ in range(MAX_ROUNDS):
         if response.get("status") == "COMPLETED":
-            return question or response.get("content") or ""
+            return question or (response.get("content") or "").strip()
         if response.get("status") != "REQUIRES_ACTION":
             raise RuntimeError(f"Backboard run {response.get('status')}: {response.get('error') or response.get('content')}")
-        outputs = []
+        run = response.get("run_id") or run
+        if not run:  # checked before any tool runs: without it the outputs cannot be submitted
+            raise RuntimeError("Backboard run REQUIRES_ACTION without a run_id: cannot submit tool outputs")
         for call in response["tool_calls"]:  # Backboard needs an output for every call of the round
+            if call["id"] in answered:
+                continue
             result = NOT_SENT
             if question is None:
                 args, result = call_tool(req["tools_url"], call)
                 if call["function"]["name"] == "ask_user" and result is not BAD_ARGS:
                     question = str(args.get("question") or "")
-            outputs.append({"tool_call_id": call["id"], "output": json.dumps(result, ensure_ascii=False)})
-        response = backboard.send("/threads/tool-outputs", {"thread_id": thread, "tool_outputs": outputs})
+            answered[call["id"]] = json.dumps(result, ensure_ascii=False)
+        outputs = [{"tool_call_id": call["id"], "output": answered[call["id"]]} for call in response["tool_calls"]]
+        # not /threads/tool-outputs: it drops this message's tools, and the model then writes later calls as plain text
+        response = backboard.send(f"/threads/{thread}/runs/{run}/submit-tool-outputs", {"tool_outputs": outputs, "tools": message["tools"]})
     return question or "Sorry, I could not finish that."
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--assistant-id", required=True, help="a dedicated Backboard assistant named bolibench-*")
     parser.add_argument("--provider", required=True, help="Backboard llm_provider, e.g. openrouter")
     parser.add_argument("--model", required=True, help="Backboard model_name, e.g. qwen/qwen3-235b-a22b-2507")
     parser.add_argument("--port", type=int, default=8000)
@@ -108,7 +131,8 @@ def main() -> None:
     api_key = os.environ.get("BACKBOARD_API_KEY")
     if not api_key:
         parser.error("BACKBOARD_API_KEY is not set")
-    backboard = Backboard(api_key, args.provider, args.model)
+    backboard = Backboard(api_key, args.assistant_id, args.provider, args.model)
+    print(f"assistant {args.assistant_id} ({check_assistant(backboard)})")
     agent = identity(args.provider, args.model)
 
     class Handler(BaseHTTPRequestHandler):
