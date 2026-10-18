@@ -3,6 +3,7 @@ import http.client
 import json
 import shutil
 import threading
+import time
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -328,21 +329,41 @@ def live_server(behavior: Behavior = good_agent, **live: Any) -> Iterator[tuple[
             s.server_close()
 
 
-def live_run(s: DemoServer, case_id: str = CASE, token: str | None = TOKEN, path: str = "/api/live-run", **extra: Any) -> tuple[int, Any]:
+def submit(s: DemoServer, case_id: str = CASE, token: str | None = TOKEN, path: str = "/api/live-run", **extra: Any) -> tuple[int, Any]:
     headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
     status, _, body = request(s, "POST", path, json.dumps({"case_id": case_id} | extra).encode(), headers)
     return status, json.loads(body)
 
 
+def poll(s: DemoServer, run_id: str, timeout: float = 15.0) -> Any:
+    deadline = time.monotonic() + timeout
+    while (run := get_json(s, f"/api/live-runs/{run_id}"))["status"] in ("queued", "running"):
+        assert time.monotonic() < deadline, run
+        time.sleep(0.02)
+    while s.live_lock.locked():  # the worker releases the run slot right after recording the result
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    return run
+
+
+def live_run(s: DemoServer, case_id: str = CASE, **kwargs: Any) -> Any:
+    """Submit, expect 202, and poll to the end."""
+    status, body = submit(s, case_id, **kwargs)
+    assert status == 202 and body["status"] == "queued" and set(body) == {"run_id", "status"}, body
+    return poll(s, body["run_id"])
+
+
 def test_live_disabled_without_configuration(server: DemoServer) -> None:
-    assert live_run(server) == (404, {"error": LIVE_DISABLED})
+    assert submit(server) == (404, {"error": LIVE_DISABLED})
     assert get_json(server, "/api/live-runs") == {"enabled": False, "reason": LIVE_DISABLED, "runs": []}
+    status, _, body = request(server, "GET", "/api/live-runs/0123456789abcdef")
+    assert (status, json.loads(body)) == (404, {"error": LIVE_DISABLED})
 
 
 def test_live_requires_the_token() -> None:
     with live_server() as (s, _, seen):
         for token in (None, "", "wrong-token-0123456789abcdef", TOKEN + "x", TOKEN.upper()):
-            status, body = live_run(s, token=token)
+            status, body = submit(s, token=token)
             assert status == 401 and "Bearer" in body["error"]
         assert seen == [] and get_json(s, "/api/live-runs")["runs"] == []
 
@@ -350,29 +371,39 @@ def test_live_requires_the_token() -> None:
 def test_live_run_end_to_end() -> None:
     with live_server() as (s, url, seen):
         assert get_json(s, "/health")["live"] is True
-        status, entry = live_run(s)
-        assert status == 200
-        assert (entry["case_id"], entry["verdict"], entry["agent"]) == (CASE, "pass", IDENTITY)
+        status, headers, raw = request(s, "POST", "/api/live-run", json.dumps({"case_id": CASE}).encode(), {"Authorization": f"Bearer {TOKEN}"})
+        queued = json.loads(raw)
+        assert (status, queued["status"], headers["Location"]) == (202, "queued", f"/api/live-runs/{queued['run_id']}")
+        entry = poll(s, queued["run_id"])
+        assert (entry["run_id"], entry["status"], entry["case_id"], entry["verdict"], entry["agent"]) == (queued["run_id"], "done", CASE, "pass", IDENTITY)
+        assert entry["queued_at"] <= entry["started_at"] <= entry["finished_at"]
         run = entry["artifact"]["run"]
         assert run["adapter"]["name"] == "webhook" and run["adapter"]["config"]["agent_url"] == url
         assert run["adapter"]["self_reported_agent"] == IDENTITY
         assert [c["tool"] for c in run["tool_calls"]] == ["list_orders", "ask_user", "cancel_order"]
         assert [r["turn"] for r in seen] == [0, 1]
         listing = get_json(s, "/api/live-runs")
-        assert (listing["enabled"], listing["runs_today"], listing["daily_cap"], listing["runs"]) == (True, 1, 50, [entry])
+        assert (listing["enabled"], listing["busy"], listing["runs_today"], listing["daily_cap"]) == (True, False, 1, 50)
+        assert listing["runs"] == [entry]
+
+
+def test_live_unknown_run_id_404() -> None:
+    with live_server() as (s, _, _seen):
+        for run_id in ("0123456789abcdef", "", "../../pyproject.toml"):
+            assert request(s, "GET", f"/api/live-runs/{run_id}")[0] == 404
 
 
 def test_live_agent_url_cannot_come_from_the_request() -> None:
     with live_server() as (s, url, seen):
-        assert live_run(s, agent_url="http://127.0.0.1:1/turn") == (400, {"error": REFUSE_AGENT_URL})
+        assert submit(s, agent_url="http://127.0.0.1:1/turn") == (400, {"error": REFUSE_AGENT_URL})
         assert seen == []
-        status, entry = live_run(s, path="/api/live-run?agent_url=http://127.0.0.1:1/turn")
-        assert status == 200 and entry["artifact"]["run"]["adapter"]["config"]["agent_url"] == url and len(seen) == 2
+        entry = live_run(s, path="/api/live-run?agent_url=http://127.0.0.1:1/turn")
+        assert entry["artifact"]["run"]["adapter"]["config"]["agent_url"] == url and len(seen) == 2
 
 
 def test_live_unknown_case_404() -> None:
     with live_server() as (s, _, seen):
-        assert live_run(s, case_id="nope")[0] == 404 and seen == []
+        assert submit(s, case_id="nope")[0] == 404 and seen == []
 
 
 def test_live_run_is_one_at_a_time() -> None:
@@ -383,31 +414,35 @@ def test_live_run_is_one_at_a_time() -> None:
         release.wait(5)
         return {"reply": "ठीक है", "agent": IDENTITY}
 
-    with live_server(slow) as (s, _, _seen):
-        with ThreadPoolExecutor(1) as pool:
-            first = pool.submit(live_run, s, "cancel-single-order")
-            assert entered.wait(5)
-            status, body = live_run(s, "cancel-single-order")
-            release.set()
-            assert (status, body["error"]) == (503, "a live run is in progress, retry shortly")
-            assert first.result()[0] == 200
+    with live_server(slow) as (s, _, seen):
+        status, first = submit(s, "cancel-single-order")
+        assert status == 202 and entered.wait(5)
+        assert get_json(s, f"/api/live-runs/{first['run_id']}")["status"] == "running"
+        assert get_json(s, "/api/live-runs")["busy"] is True
+        status, headers, body = request(s, "POST", "/api/live-run", json.dumps({"case_id": CASE}).encode(), {"Authorization": f"Bearer {TOKEN}"})
+        assert (status, headers["Retry-After"], json.loads(body)["error"]) == (503, "30", "a live run is in progress, retry shortly")
+        release.set()
+        assert poll(s, first["run_id"])["status"] == "done"
+        assert len(seen) == 1 and get_json(s, "/api/live-runs")["runs_today"] == 1  # the refused run was not counted
+        assert live_run(s, "cancel-single-order")["status"] == "done"  # free again
 
 
 def test_live_daily_cap_429() -> None:
     with live_server(daily_cap=1) as (s, _, seen):
-        assert live_run(s)[0] == 200
-        status, body = live_run(s)
+        assert live_run(s)["status"] == "done"
+        status, body = submit(s)
         assert status == 429 and "daily live-run cap of 1" in body["error"]
         assert len(seen) == 2  # the refused run never reached the agent
+        assert get_json(s, "/api/live-runs")["busy"] is False  # a capped request does not hold the run slot
 
 
 def test_live_results_are_bounded_newest_first() -> None:
     with live_server(keep=2) as (s, _, _seen):
-        for case_id in (CASE, "cancel-single-order", "awadhi-cancel-yesterday"):
-            assert live_run(s, case_id)[0] == 200
+        ids = [live_run(s, case_id)["run_id"] for case_id in (CASE, "cancel-single-order", "awadhi-cancel-yesterday")]
         listing = get_json(s, "/api/live-runs")
         assert [r["case_id"] for r in listing["runs"]] == ["awadhi-cancel-yesterday", "cancel-single-order"]
         assert listing["runs_today"] == 3
+        assert request(s, "GET", f"/api/live-runs/{ids[0]}")[0] == 404
 
 
 def test_live_unreachable_agent_is_an_error_not_a_pass() -> None:
@@ -415,19 +450,41 @@ def test_live_unreachable_agent_is_an_error_not_a_pass() -> None:
         pass  # closed: nothing listens on url any more
     s = start(limiter=RateLimiter(burst=1000), live=Live(TOKEN, url, turn_timeout=2.0))
     try:
-        status, entry = live_run(s)
-        assert (status, entry["verdict"]) == (200, "error")
+        entry = live_run(s)
+        assert (entry["status"], entry["verdict"]) == ("done", "error")
         assert entry["artifact"]["run"]["execution_error"].startswith("AdapterError: agent request failed")
     finally:
         s.shutdown()
         s.server_close()
 
 
+def test_live_run_deadline_is_an_error() -> None:
+    release = threading.Event()
+
+    def stalls(req: dict[str, Any]) -> dict[str, Any]:
+        release.wait(5)
+        return {"reply": "हो गया", "agent": IDENTITY}
+
+    with live_server(stalls, turn_timeout=1.0, run_timeout=0.3) as (s, _, seen):
+        status, queued = submit(s, "cancel-single-order")
+        assert status == 202
+        deadline = time.monotonic() + 5
+        while (run := get_json(s, f"/api/live-runs/{queued['run_id']}"))["status"] != "error":
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert run["error"] == "run deadline exceeded: not finished within 0.3s"
+        assert "verdict" not in run and "artifact" not in run
+        assert submit(s)[0] == 503  # the slot is held until the abandoned run has actually stopped
+        release.set()
+        assert poll(s, queued["run_id"]) == run  # its late result is discarded
+        assert len(seen) == 1 and live_run(s)["status"] == "done"
+
+
 def test_live_secrets_never_leak(monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
     api_key = "sk-model-access-key-should-stay-secret"
     monkeypatch.setenv("MODEL_ACCESS_KEY", api_key)
     with live_server() as (s, _, _seen):
-        bodies = [live_run(s), live_run(s, token="wrong-token-0123456789abcdef"), live_run(s, agent_url="http://x/")]
+        bodies = [live_run(s), submit(s, token="wrong-token-0123456789abcdef"), submit(s, agent_url="http://x/")]
         texts = [json.dumps(b) for b in bodies] + [request(s, "GET", p)[2].decode() for p in ("/", "/health", "/api/live-runs")]
     logs = capfd.readouterr()
     for text in [*texts, logs.out, logs.err]:
@@ -459,7 +516,9 @@ def test_live_off_without_token_or_agent(env: dict[str, str]) -> None:
 
 def test_live_from_env_on() -> None:
     env = {"BOLIBENCH_DEMO_TOKEN": TOKEN, "BOLIBENCH_LIVE_AGENT_URL": AGENT_URL, "BOLIBENCH_LIVE_DAILY_CAP": "3"}
-    assert live_from_env(env) == Live(TOKEN, AGENT_URL, 40.0, 3)
+    assert live_from_env(env) == Live(TOKEN, AGENT_URL, 240.0, 3, 600.0)
+    env |= {"BOLIBENCH_LIVE_TURN_TIMEOUT": "200", "BOLIBENCH_LIVE_RUN_TIMEOUT": "900"}
+    assert live_from_env(env) == Live(TOKEN, AGENT_URL, 200.0, 3, 900.0)
 
 
 @pytest.mark.parametrize(
@@ -469,6 +528,9 @@ def test_live_from_env_on() -> None:
         {"BOLIBENCH_LIVE_DAILY_CAP": "0"},
         {"BOLIBENCH_LIVE_TURN_TIMEOUT": "nan"},
         {"BOLIBENCH_LIVE_TURN_TIMEOUT": "-1"},
+        {"BOLIBENCH_LIVE_RUN_TIMEOUT": "soon"},
+        {"BOLIBENCH_LIVE_RUN_TIMEOUT": "0"},
+        {"BOLIBENCH_LIVE_RUN_TIMEOUT": "86400"},
         {"BOLIBENCH_DEMO_TOKEN": "short"},  # rejected even while live mode would be off
         {"BOLIBENCH_DEMO_TOKEN": TOKEN, "BOLIBENCH_LIVE_AGENT_URL": "https://example.com/turn"},
     ],

@@ -4,8 +4,9 @@ token-gated live mode. Stdlib only.
 GET responses are built once at startup from files and served from memory by exact path, so no
 request ever touches the filesystem. POST /api/evaluate replays a user-supplied FakeAgentAdapter
 script against a fresh in-memory sandbox: no network, no file writes. Requests never choose an agent
-URL. Live mode (POST /api/live-run) runs one suite case through the webhook adapter against the agent
-hosted next to this server, at a URL fixed at startup.
+URL. Live mode (POST /api/live-run) queues one suite case and returns 202 at once; a background thread
+runs it through the webhook adapter against the agent hosted next to this server, at a URL fixed at
+startup, and GET /api/live-runs/<run_id> reports its status and, when done, the artifact.
 """
 
 import hmac
@@ -13,8 +14,10 @@ import html
 import json
 import os
 import re
+import secrets
 import threading
 import time
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -55,15 +58,18 @@ class Live:
 
     token: str = field(repr=False)
     agent_url: str
-    turn_timeout: float = 40.0  # per turn; cases have at most 2 turns, so a run stays under ~100s proxy limits
+    turn_timeout: float = 240.0  # per turn: a hosted model call with retries can take ~180 s
     daily_cap: int = 50
-    keep: int = 20  # live results kept in memory for GET /api/live-runs
+    run_timeout: float = 600.0  # whole run; past it the run is reported as error
+    keep: int = 20  # live runs kept in memory for GET /api/live-runs
 
     def __post_init__(self) -> None:
         if len(self.token) < 16:
             raise ValueError("BOLIBENCH_DEMO_TOKEN must be at least 16 characters")
         if not 0 < self.turn_timeout <= 600:  # also rejects nan
             raise ValueError("BOLIBENCH_LIVE_TURN_TIMEOUT must be between 0 and 600 seconds")
+        if not 0 < self.run_timeout <= 3600:
+            raise ValueError("BOLIBENCH_LIVE_RUN_TIMEOUT must be between 0 and 3600 seconds")
         if self.daily_cap < 1:
             raise ValueError("BOLIBENCH_LIVE_DAILY_CAP must be at least 1")
         check_agent_url(self.agent_url)
@@ -248,12 +254,13 @@ Limits: {MAX_BODY // 1024} KiB body, {MAX_STEPS} steps, {RATE_BURST:.0f} request
 <h2>Live: a hosted open-weight model agent</h2>
 <p>On a configured deployment an example agent backed by an open-weight model runs in this container, and
 BoliBench drives one suite case through it over the webhook adapter, recording every tool call in its own
-sandbox. Runs need the demo owner's token and are capped per day; every run, pass or not, is listed below.</p>
+sandbox. Runs need the demo owner's token and are capped per day; every run, pass or not, is listed below.
+A run is queued and runs in the background (a hosted model can take minutes); this page polls its status.</p>
 <p id="live-status">checking live mode...</p>
 <form id="lf" hidden><label>case <select name="case_id">{options}</select></label>
 <label>token <input name="token" type="password" autocomplete="off"></label> <button>Run live</button></form>
 <pre id="lout" hidden></pre>
-<table id="lruns" hidden><tr><th>finished (UTC)</th><th>case</th><th>verdict</th><th>agent (self-reported)</th><th>classifications</th></tr></table>
+<table id="lruns" hidden><tr><th>queued (UTC)</th><th>case</th><th>status</th><th>verdict</th><th>agent (self-reported)</th><th>classifications / error</th></tr></table>
 <script>
 const $ = (id) => document.getElementById(id);
 $("f").onsubmit = async (ev) => {{
@@ -268,15 +275,17 @@ $("f").onsubmit = async (ev) => {{
 async function loadLive() {{
   const d = await (await fetch("/api/live-runs")).json();
   if (!d.enabled) {{ $("live-status").textContent = d.reason; return; }}
-  $("live-status").textContent = `Enabled: ${{d.runs_today}} of ${{d.daily_cap}} live runs used today (UTC), one at a time.`;
+  $("live-status").textContent = `Enabled: ${{d.runs_today}} of ${{d.daily_cap}} live runs used today (UTC), one at a time` +
+    (d.busy ? " (one is running now)." : ".");
   $("lf").hidden = false;
   $("lruns").hidden = d.runs.length === 0;
   $("lruns").querySelectorAll("tr.r").forEach((tr) => tr.remove());
   for (const r of d.runs) {{
     const tr = $("lruns").insertRow();
-    tr.className = "r " + r.verdict;
-    const agent = r.agent ? r.agent.name + " " + r.agent.version : "(none reported)";
-    for (const v of [r.finished_at, r.case_id, r.verdict, agent, r.artifact.evaluation.classifications.map((c) => c.category).join(", ")])
+    tr.className = "r " + (r.verdict || "");
+    const agent = r.agent ? r.agent.name + " " + r.agent.version : "-";
+    const detail = r.artifact ? r.artifact.evaluation.classifications.map((c) => c.category).join(", ") : (r.error || "");
+    for (const v of [r.queued_at, r.case_id, r.status, r.verdict || "-", agent, detail])
       tr.insertCell().textContent = v;
   }}
 }}
@@ -284,10 +293,21 @@ $("lf").onsubmit = async (ev) => {{
   ev.preventDefault();
   const f = ev.target, out = $("lout");
   out.hidden = false;
-  out.textContent = "running " + f.case_id.value + " ...";
+  out.textContent = "submitting " + f.case_id.value + " ...";
   const r = await fetch("/api/live-run", {{method: "POST", headers: {{"Content-Type": "application/json", "Authorization": "Bearer " + f.token.value}},
     body: JSON.stringify({{case_id: f.case_id.value}})}});
-  out.textContent = r.status + "\\n" + JSON.stringify(await r.json(), null, 2);
+  let d = await r.json();
+  out.textContent = r.status + "\\n" + JSON.stringify(d, null, 2);
+  if (r.status !== 202) {{ loadLive(); return; }}
+  const started = Date.now();
+  while (d.status === "queued" || d.status === "running") {{
+    loadLive();
+    await new Promise((ok) => setTimeout(ok, 3000));
+    const p = await fetch("/api/live-runs/" + encodeURIComponent(d.run_id));
+    if (!p.ok) {{ out.textContent = p.status + "\\n" + JSON.stringify(await p.json(), null, 2); break; }}
+    d = await p.json();
+    out.textContent = `${{d.status}} after ${{Math.round((Date.now() - started) / 1000)}} s\\n` + JSON.stringify(d, null, 2);
+  }}
   loadLive();
 }};
 loadLive();
@@ -336,15 +356,61 @@ class DemoServer(ThreadingHTTPServer):
         self.slots = threading.BoundedSemaphore(max_concurrent)
         self.client_ip_header = client_ip_header
         self.live = live
-        self.live_lock = threading.Lock()  # one live run at a time; also guards the two fields below
-        # replaced, never mutated, so readers need no lock
-        # ponytail: in memory; a restart resets the daily count and forgets the results
+        # held from a run's POST until its worker has finished: one live run at a time; also guards live_day
+        self.live_lock = threading.Lock()
+        self.runs_lock = threading.Lock()  # serializes writers of live_runs
+        # both replaced, never mutated (nor their dicts), so readers need no lock
+        # ponytail: in memory; a restart or free-plan spin-down resets the daily count and forgets every run
         self.live_day: tuple[str, int] = ("", 0)  # (UTC date, live runs started that day)
-        self.live_results: tuple[dict[str, Any], ...] = ()  # newest first
+        self.live_runs: tuple[dict[str, Any], ...] = ()  # newest first, at most live.keep
 
     def runs_today(self) -> int:
         day, count = self.live_day
         return count if day == datetime.now(timezone.utc).date().isoformat() else 0
+
+    def _put_run(self, run_id: str, **fields: Any) -> None:
+        assert self.live is not None
+        with self.runs_lock:
+            if any(r["run_id"] == run_id for r in self.live_runs):
+                self.live_runs = tuple(r | fields if r["run_id"] == run_id else r for r in self.live_runs)
+            else:
+                self.live_runs = ({"run_id": run_id} | fields, *self.live_runs)[: self.live.keep]
+
+    def run_live(self, run_id: str, case: TestCase) -> None:
+        """Background thread of one live run; releases live_lock when its worker has finished."""
+        live = self.live
+        assert live is not None
+        result: list[dict[str, Any]] = []
+
+        def work() -> None:
+            try:
+                with WebhookAgentAdapter(live.agent_url, live.turn_timeout) as adapter:
+                    record = run_case(case, adapter)
+                artifact = Artifact(case_id=case.id, run=record, evaluation=evaluate(case, record))
+                agent = record.adapter.self_reported_agent
+                result.append({"status": "done", "verdict": artifact.evaluation.verdict,
+                               "agent": agent.model_dump() if agent else None, "artifact": artifact.model_dump(mode="json")})
+            except Exception as e:  # a server bug: reported as error, traceback to stderr
+                traceback.print_exc()
+                result.append({"status": "error", "error": f"internal error: {type(e).__name__}"})
+
+        try:
+            self._put_run(run_id, status="running", started_at=utc_now())
+            worker = threading.Thread(target=work, daemon=True)
+            worker.start()
+            worker.join(live.run_timeout)
+            if worker.is_alive():
+                self._put_run(run_id, status="error", finished_at=utc_now(),
+                              error=f"run deadline exceeded: not finished within {live.run_timeout:g}s")
+                worker.join()  # bounded by the adapter's turn deadlines; its late result is discarded
+            else:
+                self._put_run(run_id, finished_at=utc_now(), **result[0])
+        finally:
+            self.live_lock.release()
+
+
+def utc_now() -> str:
+    return f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -382,8 +448,17 @@ class Handler(BaseHTTPRequestHandler):
             if s.live is None:
                 self._json(200, {"enabled": False, "reason": LIVE_DISABLED, "runs": []})
             else:
-                status = {"enabled": True, "daily_cap": s.live.daily_cap, "runs_today": s.runs_today(), "turn_timeout_s": s.live.turn_timeout}
-                self._json(200, status | {"runs": list(s.live_results)})
+                status = {"enabled": True, "busy": s.live_lock.locked(), "daily_cap": s.live.daily_cap, "runs_today": s.runs_today(),
+                          "turn_timeout_s": s.live.turn_timeout, "run_timeout_s": s.live.run_timeout}
+                self._json(200, status | {"runs": list(s.live_runs)})
+        elif route.startswith("/api/live-runs/"):
+            run_id = route.removeprefix("/api/live-runs/")
+            if s.live is None:
+                self._json(404, {"error": LIVE_DISABLED})
+            elif (run := next((r for r in s.live_runs if r["run_id"] == run_id), None)) is None:
+                self._json(404, {"error": f"unknown run_id (only the last {s.live.keep} runs since the last restart are kept)"})
+            else:
+                self._json(200, run)
         elif (page := s.demo.pages.get(route)) is not None:
             self._send(200, *page)
         else:
@@ -470,27 +545,20 @@ class Handler(BaseHTTPRequestHandler):
         if not s.live_lock.acquire(blocking=False):
             self._json(503, {"error": "a live run is in progress, retry shortly"}, {"Retry-After": "30"})
             return
-        try:
-            today, count = datetime.now(timezone.utc).date().isoformat(), s.runs_today()
-            if count >= live.daily_cap:
-                self._json(429, {"error": f"daily live-run cap of {live.daily_cap} reached; resets at 00:00 UTC"})
-                return
-            s.live_day = (today, count + 1)  # counted before running: errored runs used the agent too
-            with WebhookAgentAdapter(live.agent_url, live.turn_timeout) as adapter:
-                record = run_case(case, adapter)
-            artifact = Artifact(case_id=case.id, run=record, evaluation=evaluate(case, record))
-            agent = record.adapter.self_reported_agent
-            entry = {
-                "finished_at": f"{record.finished_at:%Y-%m-%dT%H:%M:%SZ}",
-                "case_id": case.id,
-                "verdict": artifact.evaluation.verdict,
-                "agent": agent.model_dump() if agent else None,
-                "artifact": artifact.model_dump(mode="json"),
-            }
-            s.live_results = (entry, *s.live_results)[: live.keep]
-        finally:
+        today, count = datetime.now(timezone.utc).date().isoformat(), s.runs_today()
+        if count >= live.daily_cap:
             s.live_lock.release()
-        self._json(200, entry)
+            self._json(429, {"error": f"daily live-run cap of {live.daily_cap} reached; resets at 00:00 UTC"})
+            return
+        s.live_day = (today, count + 1)  # counted before running: errored runs used the agent too
+        run_id = secrets.token_hex(8)
+        try:
+            s._put_run(run_id, status="queued", case_id=case.id, queued_at=utc_now())
+            threading.Thread(target=s.run_live, args=(run_id, case), daemon=True).start()  # releases live_lock
+        except BaseException:
+            s.live_lock.release()
+            raise
+        self._json(202, {"run_id": run_id, "status": "queued"}, {"Location": f"/api/live-runs/{run_id}"})
 
 
 def live_from_env(env: Mapping[str, str]) -> Live | None:
@@ -498,11 +566,12 @@ def live_from_env(env: Mapping[str, str]) -> Live | None:
     secret left blank); a value that is set but invalid raises, even when live mode would be off anyway."""
     token, agent_url = env.get("BOLIBENCH_DEMO_TOKEN", ""), env.get("BOLIBENCH_LIVE_AGENT_URL", "")
     try:
-        timeout = float(env.get("BOLIBENCH_LIVE_TURN_TIMEOUT") or "40")
+        timeout = float(env.get("BOLIBENCH_LIVE_TURN_TIMEOUT") or "240")
         cap = int(env.get("BOLIBENCH_LIVE_DAILY_CAP") or "50")
+        run_timeout = float(env.get("BOLIBENCH_LIVE_RUN_TIMEOUT") or "600")
     except ValueError as e:
-        raise ValueError(f"BOLIBENCH_LIVE_TURN_TIMEOUT / BOLIBENCH_LIVE_DAILY_CAP must be numbers: {e}") from None
-    checked = Live(token or "unset-placeholder", agent_url or "http://127.0.0.1:1/turn", timeout, cap)
+        raise ValueError(f"BOLIBENCH_LIVE_TURN_TIMEOUT / _RUN_TIMEOUT / _DAILY_CAP must be numbers: {e}") from None
+    checked = Live(token or "unset-placeholder", agent_url or "http://127.0.0.1:1/turn", timeout, cap, run_timeout)
     return checked if token and agent_url else None
 
 
@@ -517,7 +586,8 @@ def main() -> None:
         raise SystemExit(f"bolibench demo: invalid configuration: {e}") from None
     server = DemoServer((host, port), demo, client_ip_header=env.get("BOLIBENCH_CLIENT_IP_HEADER") or None, live=live)
     print(f"bolibench demo on http://{host}:{server.server_port} ({len(demo.cases)} cases)", flush=True)
-    print(f"live mode: on, agent {live.agent_url}, daily cap {live.daily_cap}" if live else f"live mode: off ({LIVE_DISABLED})", flush=True)
+    on = f"live mode: on, agent {live.agent_url}, daily cap {live.daily_cap}, turn/run timeout {live.turn_timeout:g}/{live.run_timeout:g}s" if live else ""
+    print(on or f"live mode: off ({LIVE_DISABLED})", flush=True)
     server.serve_forever()
 
 
