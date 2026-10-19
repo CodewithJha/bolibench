@@ -782,9 +782,11 @@ and resets the daily count.</p>
 <tbody id="lruns-body"></tbody></table></div>
 </section>
 </main>
-<footer class="wrap"><div class="foot-mark" aria-hidden="true">BoliBench</div><p>Data as of {e(integrations.as_of)}. JSON: <a href="/api/cases">/api/cases</a> ·
-<a href="/api/runs">/api/runs</a> · <a href="/api/integrations">/api/integrations</a> ·
-<a href="/api/live-runs">/api/live-runs</a> · <a href="/health">/health</a></p></footer>
+<footer class="wrap"><div class="foot-mark" aria-hidden="true">BoliBench</div><p>Data as of {e(integrations.as_of)}.</p>
+<details class="prov"><summary>For developers: machine-readable data</summary>
+<p class="note">The same data as JSON, for scripts and checking: <a href="/api/cases">benchmark cases</a> ·
+<a href="/api/runs">bundled runs</a> · <a href="/api/integrations">integration status</a> ·
+<a href="/api/live-runs">live-run status</a> · <a href="/health">service health</a>. Routes are unchanged; they are documented here instead of in the main interface.</p></details></footer>
 <script>{SCRIPT}</script>
 </body></html>
 """
