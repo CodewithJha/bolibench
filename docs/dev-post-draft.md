@@ -174,11 +174,40 @@ service, against the sponsor's software on my laptop, or only against stubs.
   on a read-only filesystem. Live mode is on: the same container runs the example agent against the
   hosted Gemma 4 model, gated by a demo token, with a daily cap.
 
-Also implemented, and deliberately **not** claimed as partner categories: DigitalOcean inference
-(code and config exist, never called — no key), Sentry agent tracing (real SDK, tested only against
-an in-memory transport — no DSN yet), MongoDB and Tiger Data exports (verified against local MongoDB
-and TimescaleDB + pgvector, not Atlas or Tiger Cloud), and a Backboard bridge (real API round-trip
-verified; the models I wanted to compare are blocked by free-tier billing).
+**Also genuinely used, with their limits stated plainly — documented here, but not entered as prize
+categories, because the evidence below is local, partial, or offline rather than a verified hosted use:**
+
+- **Backboard (real API, partial):** `examples/backboard_agent.py` bridges BoliBench to Backboard's
+  API. Verified live against the real service: authentication, model listing, an assistant/thread
+  round-trip, tool calls, and memory isolation between cases (two bridge bugs were found this way and
+  fixed). What I could not do: run the open-weight models I wanted to compare, because the account's
+  free credit does not pay for LLM chat. A zero-priced preview model ran 4 cases (3 pass / 1 fail).
+  So: the bridge is real and tested; a multi-model comparison through one Backboard key is **not**
+  claimed, because it never ran.
+- **Sentry Agent Tracing (SDK, offline only):** the example agent emits `gen_ai.invoke_agent`,
+  `gen_ai.chat` and `gen_ai.execute_tool` spans with token counts, grouped per case. This was tested
+  with the real SDK against an in-memory transport; no DSN was ever configured, so no trace reached
+  Sentry and I claim no hosted tracing. The offline work did catch a real leak: with the SDK's default
+  local-variable capture, an error event carried the customer's utterance and an `Authorization`
+  header; local variables are now off, and a test keeps them off.
+- **MongoDB (local only, not Atlas):** `bolibench export --to mongo` exports run history with
+  idempotent upserts and indexes. Verified against a local MongoDB 7 server, including the report
+  command. No Atlas cluster or credentials were available, so this is a local MongoDB integration —
+  not an Atlas deployment, and not entered as one.
+- **Tiger Data technology (local only, not Tiger Cloud):** `bolibench export --to tiger` stores run
+  history in a TimescaleDB hypertable and embeds every failure with EmbeddingGemma into pgvector for
+  hybrid keyword + vector "have we seen this failure before?" search. Verified locally on
+  TimescaleDB 2.30.2 + pgvector 0.8.7 (22 failures embedded; the top matches for a failure were the
+  same case in other runs). No Tiger Cloud service or credentials were available, so no cloud use is
+  claimed.
+- **DigitalOcean (code and configuration only — never called):** an OpenAI-compatible backend option
+  and an App Platform spec exist in the repo, and the same client code ran live against Ollama
+  locally and Google's Gemini API hosted. DigitalOcean's own API was never called: no model access
+  key was available. I list it here only to be explicit that it is implemented-but-unused, not an
+  integration I ran.
+
+No sponsor outreach is claimed anywhere in this post: there is no record of contact with any partner,
+and appearing in this list means only that the code above exists and was exercised as described.
 
 ## Why Does Open Innovation Matter?
 
@@ -228,4 +257,4 @@ the cases. That review hasn't happened yet, and it's the next thing BoliBench ne
 - Best Use of ElevenLabs: the verified live speech round-trip above.
 - Best Use of Temporal: the suite run as a durable workflow that resumed after `kill -9` (a durable evaluation run, stated as such).
 
-Not entered: DigitalOcean, Sentry Agent Tracing, MongoDB Atlas, Tiger Data, Backboard, .tech Domain, Entire, GitHub Copilot, Tinker, TabPFN, SerpApi, Arduino — implemented locally or not at all, as described above, but not verified against the hosted services those categories name.
+Documented above but **not entered** as prize categories: Backboard (real API, billing-blocked comparison), Sentry Agent Tracing (SDK, offline only), MongoDB Atlas (local MongoDB only), Tiger Data (local TimescaleDB only), DigitalOcean (code/config only, never called). Not used at all: .tech Domain, Entire, GitHub Copilot, Tinker, TabPFN, SerpApi, Arduino.
