@@ -319,6 +319,31 @@ button.ghost{background:var(--s2);box-shadow:none;font-weight:700;margin-left:.5
 .tl-v{display:block}
 pre{background:var(--s1);border:1.5px solid var(--ink);padding:.75rem;overflow:auto;max-height:28rem;font-size:13px}
 footer{padding:1.5rem 1.5rem 3rem;color:var(--muted);font-size:14px}
+
+.spec-strip{display:flex;flex-wrap:wrap;gap:0;margin-top:1rem;border:1.5px solid var(--ink);background:var(--s2)}
+.spec-strip span{padding:.4rem .7rem;font:700 .7rem/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;
+text-transform:uppercase;border-right:1.5px solid var(--ink)}
+.spec-strip span:last-child{border-right:0;background:var(--lime)}
+.spec-strip b{color:var(--accent)}
+.dist{margin:0 0 1rem;border:1.5px solid var(--ink);background:var(--s2);padding:.7rem .9rem}
+.dist h3{margin:0 0 .6rem;font:700 .72rem/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase}
+.dist-row{display:grid;grid-template-columns:13rem 1fr 11rem;gap:.7rem;align-items:center;margin:.35rem 0}
+.dist-name{font:600 .78rem/1.4 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.dist-bar{display:flex;height:1.05rem;border:1.5px solid var(--ink);overflow:hidden;background:var(--s1)}
+.dist-bar i{display:block;height:100%}
+.dist-bar .d-pass{background:var(--pass)}.dist-bar .d-fail{background:var(--error)}
+.dist-bar .d-error{background:var(--ink)}
+.dist-bar .d-inconclusive{background:var(--accent)}
+.dist-num{font:600 .78rem/1.4 ui-monospace,Menlo,Consolas,monospace;text-align:right}
+.case-no{display:inline-block;background:var(--ink);color:var(--bg);font:700 .7rem/1 ui-monospace,Menlo,Consolas,monospace;
+padding:.3em .4em;margin:0 .45em .3em 0;vertical-align:.1em}
+.matrix tbody tr:hover th,.matrix tbody tr:hover td{background:#F8F3DF}
+.matrix tbody tr:hover th{box-shadow:inset 4px 0 0 var(--lime)}
+.chip{display:inline-block;border:1.2px solid var(--ink);background:var(--s2);padding:.05em .4em;margin:.1em .1em .1em 0;font-weight:700}
+.sig .arr{font-weight:900;color:var(--accent)}
+.foot-mark{font-weight:900;font-size:clamp(2.4rem,8vw,5.2rem);line-height:.95;letter-spacing:-.03em;text-transform:uppercase;
+color:transparent;-webkit-text-stroke:1.5px var(--ink);margin:.4rem 0 .6rem}
+@media (max-width:768px){.dist-row{grid-template-columns:1fr;gap:.2rem}.dist-num{text-align:left}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 @media (max-width:1024px){.wrap{padding:0 1.25rem}.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:14rem}}
 @media (max-width:768px){header.top{padding:1.5rem 0 1rem}h1{font-size:1.9rem}section{padding:1.5rem 0}
@@ -539,16 +564,17 @@ def render_index(
         f'<td class="num">{sum(v == "pass" for v, _ in verdicts[r.label].values())} of {len(verdicts[r.label])}</td>' for r in runs
     )
     rows = []
-    for cid in case_ids:
+    for num, cid in enumerate(case_ids, 1):
         if (case := cases.get(cid)) is not None:
             lang = (' lang="awa"' if "awadhi" in case.tags else ' lang="hi"') if DEVANAGARI.search(case.turns[0]) else ""
             more = f" (+{len(case.turns) - 1} more turn)" if len(case.turns) > 1 else ""
             exp = case.expected
-            sig = [f"ask {kind} before {tool}" for tool, kind in exp.ask_before.items()]
-            sig += [f"requires {a.tool}({', '.join(f'{k}={v}' for k, v in a.args.items())})" for a in exp.required_actions]
-            if not sig:
-                sig = ["no consequential action expected"]
-            signature = f'<span class="sig">{e(" · ".join(sig))}</span>'
+            steps = [f"ask {kind} → {tool}" for tool, kind in exp.ask_before.items()]
+            steps += [f"{a.tool}({', '.join(f'{k}={v}' for k, v in a.args.items())})" for a in exp.required_actions]
+            if not steps:
+                steps = ["no consequential action"]
+            chips = '<span class="arr" aria-hidden="true"> → </span>'.join(f'<span class="chip">{e(st)}</span>' for st in steps)
+            signature = f'<span class="sig">{chips}</span>'
             about = f'<span class="utt"{lang}>{e(case.turns[0])}</span><span class="sub">{e(", ".join(case.tags))}{more}</span>{signature}'
         else:
             about = '<span class="sub">(not in current suite)</span>'
@@ -563,7 +589,21 @@ def render_index(
                 f'<td><a class="v v-{e(verdict)}" href="/api/runs/{e(r.label)}/{e(cid)}" aria-label="{e(name)}">{e(verdict)}</a>'
                 f'<span class="cls">{e(", ".join(cats))}</span></td>'
             )
-        rows.append(f'<tr><th scope="row" class="case"><code>{e(cid)}</code>{about}</th>{"".join(cells)}</tr>')
+        rows.append(f'<tr><th scope="row" class="case"><span class="case-no" aria-hidden="true">{num:02d}</span><code>{e(cid)}</code>{about}</th>{"".join(cells)}</tr>')
+
+    dist_rows = "".join(
+        f'<div class="dist-row"><span class="dist-name">{e(short_label(r.label))}</span>'
+        f'<span class="dist-bar" role="img" aria-label="{e(short_label(r.label))}: '
+        + ", ".join(f"{sum(v == k for v, _ in verdicts[r.label].values())} {k}" for k in VERDICTS)
+        + '">'
+        + "".join(
+            f'<i class="d-{k}" style="width:{100 * sum(v == k for v, _ in verdicts[r.label].values()) / max(1, len(verdicts[r.label])):.1f}%"></i>'
+            for k in VERDICTS if sum(v == k for v, _ in verdicts[r.label].values())
+        )
+        + f'</span><span class="dist-num">{sum(v == "pass" for v, _ in verdicts[r.label].values())} pass · {sum(v == "fail" for v, _ in verdicts[r.label].values())} fail</span></div>'
+        for r in runs
+    )
+    dist_block = f'<div class="dist"><h3>Run distribution — share of verdicts per bundled run</h3>{dist_rows}</div>'
     run_legend = "".join(
         f"<dt><code>{e(r.label)}</code></dt><dd>{e(r.model)}<br>Agent: {e(r.agent)}<br>{e(r.note)}</dd>" for r in runs
     )
@@ -594,6 +634,7 @@ order-management conversation in Hindi-English code-switching or Awadhi ("cancel
 order?") with a sandboxed shop. BoliBench records every tool call the agent makes and the final state of the
 orders; the verdict comes from those observations, not from what the agent claims in its reply.</p>
 <ul class="facts"><li>{e(review_fact)}</li><li>{len(runs)} bundled runs: single unseeded executions, not rankings</li></ul>
+<div class="spec-strip" aria-label="Benchmark specimen summary"><span>Instrument <b>BB-ORDERS</b></span><span>{len(cases)} specimens</span><span>{len(runs)} bundled runs</span><span>{judged} judged</span><span>Data {e(integrations.as_of)}</span></div>
 <nav aria-label="Sections"><ul>
 <li><a href="#results">Results</a></li><li><a href="#cases">Cases</a></li><li><a href="#integrations">Integrations</a></li>
 <li><a href="#evaluate">Script evaluation</a></li><li><a href="#live">Live demo</a></li>
@@ -603,6 +644,7 @@ orders; the verdict comes from those observations, not from what the agent claim
 <section id="results" aria-labelledby="results-h">
 <h2 id="results-h"><span class="sec" aria-hidden="true">01</span>Results</h2>
 <ul class="stats"><li><b>{len(cases)}</b> cases</li><li><b>{len(runs)}</b> bundled runs</li><li><b>{judged}</b> judged case runs</li></ul>
+{dist_block}
 <div class="caveats" role="note" aria-label="Caveats">
 <p><b>Read these counts with care.</b></p>
 <ul>
@@ -685,7 +727,7 @@ and resets the daily count.</p>
 <tbody id="lruns-body"></tbody></table></div>
 </section>
 </main>
-<footer class="wrap"><p>Data as of {e(integrations.as_of)}. JSON: <a href="/api/cases">/api/cases</a> ·
+<footer class="wrap"><div class="foot-mark" aria-hidden="true">BoliBench</div><p>Data as of {e(integrations.as_of)}. JSON: <a href="/api/cases">/api/cases</a> ·
 <a href="/api/runs">/api/runs</a> · <a href="/api/integrations">/api/integrations</a> ·
 <a href="/api/live-runs">/api/live-runs</a> · <a href="/health">/health</a></p></footer>
 <script>{SCRIPT}</script>
