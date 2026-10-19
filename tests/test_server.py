@@ -233,10 +233,11 @@ def test_integrations_endpoint(server: DemoServer) -> None:
     assert get_json(server, "/api/integrations") == json.loads((DEMO / "integrations.json").read_text(encoding="utf-8"))
 
 
-def test_invalid_integrations_stop_startup(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status", ["verified", "live-verified (hosted)", "offline-tested", "pass"])
+def test_invalid_integrations_stop_startup(tmp_path: Path, status: str) -> None:
     demo = shutil.copytree(DEMO, tmp_path / "demo")
     data = json.loads((demo / "integrations.json").read_text(encoding="utf-8"))
-    data["integrations"][0]["status"] = "verified"  # not one of the documented statuses
+    data["integrations"][0]["status"] = status  # not one of the documented statuses
     (demo / "integrations.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError):
         load_demo(ROOT / "suites" / "orders", demo)

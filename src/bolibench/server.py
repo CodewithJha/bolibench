@@ -88,11 +88,23 @@ class RunIndex(Model):
     runs: list[BundledRun]
 
 
+IntegrationStatus = Literal["deployed", "hosted-api", "local", "partial", "offline", "implemented", "blocked"]
+# the legend on the page and in docs/deployment.md; keys must equal IntegrationStatus (checked in tests)
+STATUSES = {
+    "deployed": "exercised by this deployed app",
+    "hosted-api": "a real hosted provider API, called from a laptop; not in the deployed app",
+    "local": "real software or models run on a laptop; not in the deployed app",
+    "partial": "real calls work, but the intended setup could not run in full",
+    "offline": "checked only against fakes, stubs or in-memory transports; no real service called",
+    "implemented": "code in the repo, not exercised against anything",
+    "blocked": "cannot be exercised yet: a credential or account is missing",
+}
+
+
 class Integration(Model):
     name: str
     category: str
-    # the highest level actually reached; "live-verified" means a real call to the service or a real run of the model
-    status: Literal["not verified", "implemented", "offline-tested", "live-verified (local)", "live-verified (hosted)"]
+    status: IntegrationStatus  # the highest level actually reached, with evidence in the repo
     evidence: str  # repo-relative paths or a plain-text pointer
     note: str
 

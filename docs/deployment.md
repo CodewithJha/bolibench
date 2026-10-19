@@ -58,14 +58,17 @@ The integrations panel and `GET /api/integrations` come from this static file, h
 
 ```json
 {"as_of": "2026-10-18", "integrations": [
-  {"name": "Mastra agent", "category": "agent framework", "status": "live-verified (local)",
+  {"name": "Mastra agent", "category": "agent framework", "status": "local",
    "evidence": "demo/runs/mastra-qwen3-8b-2026-10-17, docs/integrations/mastra.md", "note": "..."}]}
 ```
 
-`status` is the highest level actually reached, one of `not verified`, `implemented` (code in the
-repo), `offline-tested` (tests against fakes, stubs or local test servers), `live-verified (local)`,
-`live-verified (hosted)` ("live" = a real call to the service or a real run of the model). Raise it
-only with evidence in the repo, name that evidence (repo-relative paths) in `evidence`, and bump
+`status` is the highest level actually reached, one of (`STATUSES` in `src/bolibench/server.py`, also
+the page legend): `deployed` (exercised by this deployed app), `hosted-api` (a real hosted provider API,
+called from a laptop; not in the deployed app), `local` (real software or models run on a laptop; not in
+the deployed app), `partial` (real calls work, but the intended setup could not run in full), `offline`
+(checked only against fakes, stubs or in-memory transports), `implemented` (code in the repo, not
+exercised) or `blocked` (a credential or account is missing). Only `deployed` rows count as exercised
+by the deployed app. Raise it only with evidence in the repo, name that evidence (repo-relative paths) in `evidence`, and bump
 `as_of`. Any other status or a missing/extra field stops the server at startup;
 `uv run pytest -q tests/test_server.py` checks the file.
 
