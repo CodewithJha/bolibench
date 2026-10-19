@@ -354,6 +354,33 @@ dl.legend,dl.kv{grid-template-columns:1fr;gap:.15rem}dl.legend dd,dl.kv dd{margi
 select,input,button{width:100%;min-width:0}button.ghost{margin-left:0;margin-top:.5rem}
 .matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:9.5rem;max-width:10rem}.matrix td{min-width:7.5rem}
 .int th[scope=row]{min-width:9rem}.int td:nth-child(4){min-width:13rem}}
+
+/* v3: typography, masthead plate, sticky nav, filters */
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Devanagari",sans-serif}
+h1,h2,.foot-mark{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:-.035em;text-wrap:balance}
+h1{font-size:clamp(2.6rem,6.5vw,4.4rem)}
+code,pre,textarea,.kicker,.facts li,caption,.sig,.dist-name,.dist-num,.tl-k,.st,.plate-k,.plate-meta{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+header.top{background-image:radial-gradient(var(--line) 1.1px, transparent 1.3px);background-size:22px 22px}
+.mast{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(17rem,.9fr);gap:2.2rem;align-items:start}
+.plate{background:var(--ink);color:var(--bg);border:2px solid var(--ink);box-shadow:9px 9px 0 var(--lime);padding:1.05rem 1.1rem}
+.plate-k{font-size:.68rem;letter-spacing:.13em;text-transform:uppercase;color:var(--lime);margin:0 0 .7rem;font-weight:600}
+.plate-utt{font-family:system-ui,sans-serif;letter-spacing:-.02em;font-size:1.35rem;line-height:1.3;font-weight:600;margin:0 0 .9rem}
+.plate-flow{margin:0 0 .8rem;line-height:2}
+.p-chip{border:1.5px solid var(--bg);padding:.18em .45em;font-family:ui-monospace,Menlo,monospace;font-size:.75rem;white-space:nowrap}
+.plate .arr{color:var(--lime);font-weight:900}
+.plate-meta{font-size:.72rem;color:#CFC9BC;margin:0;line-height:1.6}
+.topnav{position:sticky;top:0;z-index:40;background:var(--bg);border-bottom:2.5px solid var(--ink)}
+.topnav ul{margin:0;padding:.55rem 0}
+.topnav a{background:var(--bg)}
+section{position:relative}
+h2{font-size:clamp(1.4rem,3vw,1.9rem)}
+.filters{display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:end;margin:0 0 .8rem}
+.filters label{font-weight:800;margin:0}
+.filters input{flex:1 1 16rem;border-width:2px;background:var(--s2)}
+.filters .note{margin:0;flex-basis:100%}
+tr[hidden]{display:none}
+@media (max-width:900px){.mast{grid-template-columns:1fr}.plate{max-width:32rem}}
+
 """
 SCRIPT = """
 const $ = (id) => document.getElementById(id);
@@ -450,6 +477,17 @@ form.onsubmit = async (ev) => {
   } finally { btn.disabled = false; }
 };
 loadScript();
+
+// --- specimen filter (cases matrix) ---
+const filterInput = $("case-filter"), filterCount = $("filter-count");
+const caseRows = [...document.querySelectorAll(".matrix tbody tr")];
+function applyFilter() {
+  const q = filterInput.value.trim().toLowerCase();
+  let shown = 0;
+  caseRows.forEach((r) => { const hit = !q || r.textContent.toLowerCase().includes(q); r.hidden = !hit; if (hit) shown += 1; });
+  filterCount.textContent = q ? shown + " of " + caseRows.length + " specimens match \u2014 clear the filter to see all." : "";
+}
+if (filterInput) filterInput.addEventListener("input", applyFilter);
 
 // --- live demo ---
 let liveCfg = null, liveActive = false;
@@ -589,7 +627,7 @@ def render_index(
                 f'<td><a class="v v-{e(verdict)}" href="/api/runs/{e(r.label)}/{e(cid)}" aria-label="{e(name)}">{e(verdict)}</a>'
                 f'<span class="cls">{e(", ".join(cats))}</span></td>'
             )
-        rows.append(f'<tr><th scope="row" class="case"><span class="case-no" aria-hidden="true">{num:02d}</span><code>{e(cid)}</code>{about}</th>{"".join(cells)}</tr>')
+        rows.append(f'<tr data-search="{e(cid)}"><th scope="row" class="case"><span class="case-no" aria-hidden="true">{num:02d}</span><code>{e(cid)}</code>{about}</th>{"".join(cells)}</tr>')
 
     dist_rows = "".join(
         f'<div class="dist-row"><span class="dist-name">{e(short_label(r.label))}</span>'
@@ -621,12 +659,25 @@ def render_index(
     options = "".join(f'<option{" selected" if c == default else ""}>{e(c)}</option>' for c in cases)
     form_data = {cid: {"turns": len(c.turns), "script": examples.get(cid)} for cid, c in cases.items()}
     form_json = json.dumps(form_data, ensure_ascii=False).replace("<", "\\u003c")  # cannot close the <script> block
+
+    featured = cases[default]
+    f_steps = [f"ask {kind} \u2192 {tool}" for tool, kind in featured.expected.ask_before.items()]
+    f_steps += [f"{a.tool}({', '.join(f'{k}={v}' for k, v in a.args.items())})" for a in featured.expected.required_actions]
+    plate_steps = '<span class="arr" aria-hidden="true"> \u2192 </span>'.join(f'<span class="p-chip">{e(st)}</span>' for st in f_steps) or '<span class="p-chip">no consequential action</span>'
+    plate_html = (
+        f'<aside class="plate" aria-label="Featured specimen {e(featured.id)}">'
+        f'<p class="plate-k">Lab plate 01 \u00b7 specimen {e(featured.id)}</p>'
+        f'<p class="plate-utt">{e(featured.turns[0])}</p>'
+        f'<p class="plate-flow">{plate_steps}</p>'
+        f'<p class="plate-meta">{" \u00b7 ".join(e(t) for t in featured.tags)} \u00b7 {len(featured.turns)} turn(s) \u00b7 verdict comes from recorded tool calls + final state</p></aside>'
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BoliBench demo</title>
 <style>{CSS}</style></head><body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top"><div class="wrap">
+<div class="mast"><div class="mast-main">
 <p class="kicker">BoliBench / Behavioural Evaluation &mdash; Specimen Ledger</p>
 <h1><span class="mark" aria-hidden="true">&#9638;</span>BoliBench</h1>
 <p class="lede">An open-source benchmark for tool-using conversational agents. Each case is a short
@@ -634,12 +685,13 @@ order-management conversation in Hindi-English code-switching or Awadhi ("cancel
 order?") with a sandboxed shop. BoliBench records every tool call the agent makes and the final state of the
 orders; the verdict comes from those observations, not from what the agent claims in its reply.</p>
 <ul class="facts"><li>{e(review_fact)}</li><li>{len(runs)} bundled runs: single unseeded executions, not rankings</li></ul>
+</div>{plate_html}</div>
 <div class="spec-strip" aria-label="Benchmark specimen summary"><span>Instrument <b>BB-ORDERS</b></span><span>{len(cases)} specimens</span><span>{len(runs)} bundled runs</span><span>{judged} judged</span><span>Data {e(integrations.as_of)}</span></div>
-<nav aria-label="Sections"><ul>
+</div></header>
+<nav class="topnav" aria-label="Sections"><div class="wrap"><ul>
 <li><a href="#results">Results</a></li><li><a href="#cases">Cases</a></li><li><a href="#integrations">Integrations</a></li>
 <li><a href="#evaluate">Script evaluation</a></li><li><a href="#live">Live demo</a></li>
-</ul></nav>
-</div></header>
+</ul></div></nav>
 <main id="main" class="wrap">
 <section id="results" aria-labelledby="results-h">
 <h2 id="results-h"><span class="sec" aria-hidden="true">01</span>Results</h2>
@@ -666,6 +718,9 @@ difference of a case or two between runs may be sampling noise. The counts are n
 open <i>Run provenance</i> below the table, for the model, agent and notes. Select a verdict to open that case's
 full artifact (JSON: turns, tool calls, final state, checks). Each run is a single unseeded run, so per-case
 differences may be sampling noise.</p>
+<div class="filters"><label for="case-filter">Filter specimens</label>
+<input id="case-filter" type="search" autocomplete="off" placeholder="Search a case id, tag, or opening line&hellip;">
+<p id="filter-count" class="note" aria-live="polite"></p></div>
 <div class="scroll" role="region" aria-labelledby="cases-cap" tabindex="0">
 <table class="matrix"><caption id="cases-cap">Verdict and failure classification per case and bundled run</caption>
 <thead><tr><th scope="col">Case<span class="sub">first user turn, tags</span></th>{head}</tr></thead>
