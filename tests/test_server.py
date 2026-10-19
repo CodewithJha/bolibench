@@ -496,6 +496,25 @@ def test_live_run_end_to_end() -> None:
         listing = get_json(s, "/api/live-runs")
         assert (listing["enabled"], listing["busy"], listing["runs_today"], listing["daily_cap"]) == (True, False, 1, 50)
         assert listing["runs"] == [entry]
+        # the existing fields plus the additive, display-only model and provider
+        assert set(listing) == {"enabled", "busy", "daily_cap", "runs_today", "turn_timeout_s", "run_timeout_s", "runs", "model", "provider"}
+        assert (listing["model"], listing["provider"]) == (None, None)
+
+
+def test_live_runs_report_model_and_provider_host_only() -> None:
+    base_url = "https://user:secret-in-url@generativelanguage.googleapis.com/v1beta/openai/?key=query-secret"
+    with fake_agent(good_agent) as (url, _):
+        env = {"BOLIBENCH_DEMO_TOKEN": TOKEN, "BOLIBENCH_LIVE_AGENT_URL": url, "AGENT_MODEL": "gemma-4-31b-it", "AGENT_BASE_URL": base_url}
+        s = start(limiter=RateLimiter(burst=1000), live=live_from_env(env))
+        try:
+            listing = get_json(s, "/api/live-runs")
+            texts = [json.dumps(listing), page_html(s), request(s, "GET", "/health")[2].decode()]
+        finally:
+            s.shutdown()
+            s.server_close()
+    assert (listing["model"], listing["provider"]) == ("gemma-4-31b-it", "generativelanguage.googleapis.com")
+    for text in texts:
+        assert "secret-in-url" not in text and "query-secret" not in text and TOKEN not in text
 
 
 def test_live_unknown_run_id_404() -> None:

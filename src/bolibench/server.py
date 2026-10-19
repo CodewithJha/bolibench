@@ -25,6 +25,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Literal, TypeVar
+from urllib.parse import urlsplit
 
 from pydantic import Field, ValidationError
 
@@ -62,6 +63,8 @@ class Live:
     daily_cap: int = 50
     run_timeout: float = 600.0  # whole run; past it the run is reported as error
     keep: int = 20  # live runs kept in memory for GET /api/live-runs
+    model: str = ""  # display only: the hosted agent's model id
+    provider: str = ""  # display only: host name of the agent's model endpoint, never its key
 
     def __post_init__(self) -> None:
         if len(self.token) < 16:
@@ -769,7 +772,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"enabled": False, "reason": LIVE_DISABLED, "runs": []})
             else:
                 status = {"enabled": True, "busy": s.live_lock.locked(), "daily_cap": s.live.daily_cap, "runs_today": s.runs_today(),
-                          "turn_timeout_s": s.live.turn_timeout, "run_timeout_s": s.live.run_timeout}
+                          "turn_timeout_s": s.live.turn_timeout, "run_timeout_s": s.live.run_timeout,
+                          "model": s.live.model or None, "provider": s.live.provider or None}
                 self._json(200, status | {"runs": list(s.live_runs)})
         elif route.startswith("/api/live-runs/"):
             run_id = route.removeprefix("/api/live-runs/")
@@ -891,7 +895,9 @@ def live_from_env(env: Mapping[str, str]) -> Live | None:
         run_timeout = float(env.get("BOLIBENCH_LIVE_RUN_TIMEOUT") or "600")
     except ValueError as e:
         raise ValueError(f"BOLIBENCH_LIVE_TURN_TIMEOUT / _RUN_TIMEOUT / _DAILY_CAP must be numbers: {e}") from None
-    checked = Live(token or "unset-placeholder", agent_url or "http://127.0.0.1:1/turn", timeout, cap, run_timeout)
+    # display only, the agent's settings from deploy/start.sh: model id and endpoint host (no path, query or credentials)
+    model, provider = env.get("AGENT_MODEL", ""), urlsplit(env.get("AGENT_BASE_URL", "")).hostname or ""
+    checked = Live(token or "unset-placeholder", agent_url or "http://127.0.0.1:1/turn", timeout, cap, run_timeout, model=model, provider=provider)
     return checked if token and agent_url else None
 
 
