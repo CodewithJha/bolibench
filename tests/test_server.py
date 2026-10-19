@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -19,7 +19,10 @@ from bolibench.server import (
     MAX_BODY,
     MAX_STEPS,
     REFUSE_AGENT_URL,
+    STATUSES,
+    VERDICTS,
     DemoServer,
+    IntegrationStatus,
     Live,
     RateLimiter,
     live_from_env,
@@ -39,7 +42,8 @@ LABELS = [
 CASE = "ambiguous-previous-order"
 GOOD = json.loads((ROOT / "examples" / "scripts" / f"{CASE}.json").read_text(encoding="utf-8"))
 WRONG = [GOOD[0], [{"tool": "cancel_order", "args": {"order_id": "ORD-102"}}, {"text": "हो गया"}]]
-DEMO_DATA = load_demo(ROOT / "suites" / "orders", DEMO)
+SCRIPTS = ROOT / "examples" / "scripts"
+DEMO_DATA = load_demo(ROOT / "suites" / "orders", DEMO, SCRIPTS)
 
 Response = tuple[int, dict[str, str], bytes]
 
@@ -217,7 +221,7 @@ def test_index_html(server: DemoServer) -> None:
     page = body.decode()
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert "default-src 'none'" in headers["Content-Security-Policy"]
-    assert "records every tool call" in page and "the 12 cases" in page
+    assert "records every tool call" in page and "12 proposed, not yet reviewed cases" in page
     for label in LABELS:
         assert label in page
         assert f'href="/api/runs/{label}/{CASE}"' in page
@@ -241,6 +245,112 @@ def test_invalid_integrations_stop_startup(tmp_path: Path, status: str) -> None:
     (demo / "integrations.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError):
         load_demo(ROOT / "suites" / "orders", demo)
+
+
+def page_html(server: DemoServer) -> str:
+    return request(server, "GET", "/")[2].decode()
+
+
+def section(page: str, start: str, end: str = "</table>") -> str:
+    return page[page.index(start) : page.index(end, page.index(start))]
+
+
+def test_integration_status_vocabulary_is_documented(server: DemoServer) -> None:
+    assert list(STATUSES) == list(get_args(IntegrationStatus)) == ["deployed", "hosted-api", "local", "partial", "offline", "implemented", "blocked"]
+    docs = (ROOT / "docs" / "deployment.md").read_text(encoding="utf-8")
+    legend = section(page_html(server), '<section id="integrations"', "</dl>")
+    for slug, meaning in STATUSES.items():
+        assert f"`{slug}`" in docs
+        assert f'<dt><span class="st st-{slug}">{slug}</span></dt><dd>{html.escape(meaning)}</dd>' in legend
+
+
+def test_integration_statuses_are_honest_and_never_verdict_coloured(server: DemoServer) -> None:
+    status = {i["name"]: i["status"] for i in get_json(server, "/api/integrations")["integrations"]}
+    assert {n for n, s in status.items() if s == "deployed"} == {"Render deploy", "Gemma 4 via the Gemini API (OpenAI-compatible backend)"}
+    assert status["Backboard bridge"] == "partial" and status["ElevenLabs speech"] == "hosted-api"
+    assert status["Sentry agent tracing"] == "offline"
+    assert status["DigitalOcean serverless inference"] == status["DigitalOcean App Platform deploy"] == "blocked"
+    for name in ("Gemma via Ollama", "Mastra agent", "Temporal durable evaluation runs", "MongoDB export (Atlas pending)"):
+        assert status[name] == "local"
+    table = section(page_html(server), '<table class="int">')
+    assert not any(f"v-{v}" in table or f'class="{v}"' in table for v in VERDICTS)
+    for name, s in status.items():
+        row = section(table, f'<th scope="row">{html.escape(name)}', "</tr>")
+        assert f'<span class="st st-{s}">{s}</span></td><td>{"yes" if s == "deployed" else "no"}</td>' in row
+
+
+def test_page_structure_caveats_and_accessibility(server: DemoServer) -> None:
+    page = page_html(server)
+    assert '<meta name="viewport" content="width=device-width,initial-scale=1">' in page
+    for anchor, label in [("results", "Results"), ("cases", "Cases"), ("integrations", "Integrations"), ("evaluate", "Script evaluation"), ("live", "Live demo")]:
+        assert f'<a href="#{anchor}">{label}</a>' in page and f'<section id="{anchor}" aria-labelledby="{anchor}-h">' in page
+    for landmark in ("<header", "<nav", "<main", "<footer"):
+        assert landmark in page
+    for text in ("12 proposed, not yet reviewed cases", "single unseeded executions, not rankings", "sampling noise", "not a score or a ranking"):
+        assert text in page
+    for live_region in ('id="out" class="out" aria-live="polite"', 'id="live-status" aria-live="polite"', 'id="lout" class="out" aria-live="polite"'):
+        assert live_region in page
+    assert page.count('class="scroll"') == 4 and ":focus-visible" in page
+    assert "@media (max-width:480px)" in page and "@media (max-width:768px)" in page and "@media (max-width:1024px)" in page
+    assert '<label for="script">' in page and 'lang="hi"' in page and 'lang="awa"' in page
+    assert f'aria-label="fail — qwen3-8b-agent-v2 / {CASE}"' in page
+    assert "every run, pass or not, is listed" not in page and "memory only" in page
+    assert "innerHTML" not in page and "eval(" not in page
+
+
+def test_summary_counts_come_from_bundled_runs(server: DemoServer) -> None:
+    summary = section(page_html(server), '<table class="summary">')
+    assert summary.count('<tr><th scope="row"') == len(LABELS)
+    for label in LABELS:
+        s = json.loads((DEMO / "runs" / label / "summary.json").read_text(encoding="utf-8"))
+        cells = "".join(f'<td class="num">{s["counts"][k]}</td>' for k in VERDICTS) + f'<td class="num">{s["total"]}</td>'
+        assert cells in section(summary, label.rsplit("-", 3)[0] + "</th>", "</tr>")
+
+
+def test_evaluator_has_a_starting_script_for_every_case(server: DemoServer) -> None:
+    page = page_html(server)
+    data = json.loads(section(page, '<script type="application/json" id="examples">', "</script>").split(">", 1)[1])
+    assert set(data) == set(DEMO_DATA.cases)
+    assert "placeholder reply for user turn" in page and "it is an editable starting point" in page
+    for cid, entry in data.items():
+        turns = len(DEMO_DATA.cases[cid].turns)
+        assert entry["turns"] == turns
+        if entry["script"] is not None:  # a bundled example must pass
+            assert post(server, {"case_id": cid, "script": entry["script"]})[1]["evaluation"]["verdict"] == "pass"
+        # the page's placeholder (one reply per user turn) is always an accepted request
+        placeholder = [[{"text": f"placeholder reply for user turn {i + 1}"}] for i in range(turns)]
+        assert post(server, {"case_id": cid, "script": placeholder})[0] == 200
+    assert data[CASE]["script"] == GOOD
+
+
+def test_example_script_with_wrong_turn_count_stops_startup(tmp_path: Path) -> None:
+    (tmp_path / "cancel-single-order.json").write_text(json.dumps(GOOD), encoding="utf-8")  # 2 turns for a 1-turn case
+    with pytest.raises(ValueError, match="cancel-single-order"):
+        load_demo(ROOT / "suites" / "orders", DEMO, tmp_path)
+
+
+def test_page_escapes_case_and_integration_text(tmp_path: Path) -> None:
+    demo = shutil.copytree(DEMO, tmp_path / "demo")
+    data = json.loads((demo / "integrations.json").read_text(encoding="utf-8"))
+    data["integrations"][0]["note"] = "<script>alert(1)</script>"
+    (demo / "integrations.json").write_text(json.dumps(data), encoding="utf-8")
+    page = load_demo(ROOT / "suites" / "orders", demo).pages["/"][1].decode()
+    assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    assert page.count("<script") == 2  # the JSON data block and the page script
+
+
+def test_page_contains_no_secrets_or_key_names(server: DemoServer) -> None:
+    page = page_html(server)
+    for needle in ("GEMINI_API_KEY", "MODEL_ACCESS_KEY", "AGENT_API_KEY", "BOLIBENCH_DEMO_TOKEN", "sk-", "AIza", "Bearer ey"):
+        assert needle not in page
+
+
+def test_api_contract_of_existing_endpoints(server: DemoServer) -> None:
+    run_keys = {"label", "source", "date", "model", "agent", "note", "config_id", "total", "counts", "cases", "adapters"}
+    assert all(set(r) == run_keys for r in get_json(server, "/api/runs"))
+    assert {i for e in get_json(server, "/api/integrations")["integrations"] for i in e} == {"name", "category", "status", "evidence", "note"}
+    status, artifact = post(server, {"case_id": CASE, "script": GOOD})
+    assert status == 200 and set(artifact) == {"schema_version", "case_id", "run", "evaluation"}
 
 
 def test_no_absolute_paths_in_responses(server: DemoServer) -> None:

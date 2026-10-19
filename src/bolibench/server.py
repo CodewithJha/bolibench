@@ -145,7 +145,21 @@ class Demo:
     pages: dict[str, tuple[str, bytes]]  # exact request path -> (content type, body)
 
 
-def load_demo(suite_dir: Path, demo_dir: Path) -> Demo:
+def load_examples(cases: dict[str, TestCase], demo_dir: Path, scripts_dir: Path | None) -> dict[str, Any]:
+    """Example scripts for the evaluator form: demo/example-request.json plus <scripts_dir>/<case id>.json."""
+    request = json.loads((demo_dir / "example-request.json").read_text(encoding="utf-8"))
+    examples = {request["case_id"]: request["script"]}
+    for cid in cases:
+        if scripts_dir and (p := scripts_dir / f"{cid}.json").is_file():
+            examples[cid] = json.loads(p.read_text(encoding="utf-8"))
+    for cid, script in examples.items():
+        EvaluateRequest.model_validate({"case_id": cid, "script": script})
+        if cid not in cases or len(script) != len(cases[cid].turns):
+            raise ValueError(f"example script for {cid} does not match a suite case's turn count")
+    return examples
+
+
+def load_demo(suite_dir: Path, demo_dir: Path, scripts_dir: Path | None = None) -> Demo:
     """Load and validate everything up front; any inconsistency stops startup instead of being served."""
     cases = {c.id: c for c in load_suite(suite_dir)}
     index = RunIndex.model_validate_json((demo_dir / "runs" / "index.json").read_bytes())
@@ -179,151 +193,445 @@ def load_demo(suite_dir: Path, demo_dir: Path) -> Demo:
     pages["/api/cases"] = (JSON, dumps(scrub([c.model_dump(mode="json") for c in cases.values()])))
     pages["/api/runs"] = (JSON, dumps(scrub(runs)))
     pages["/api/integrations"] = (JSON, dumps(scrub(integrations.model_dump())))
-    example = (demo_dir / "example-request.json").read_text(encoding="utf-8")
-    page = render_index(cases, index.runs, verdicts, example, integrations)
+    examples = load_examples(cases, demo_dir, scripts_dir)
+    page = render_index(cases, index.runs, verdicts, examples, integrations)
     pages["/"] = ("text/html; charset=utf-8", page.encode())
     return Demo(cases, len(runs), pages)
+
+
+VERDICTS = {
+    "pass": "every check passed",
+    "fail": "at least one check failed: a wrong, missing or forbidden action, a wrong final state, or no question when one was required",
+    "error": "the run did not complete (agent or adapter error, or a timeout), so no checks were run",
+    "inconclusive": "no check failed, but evidence one of them needs was missing",
+}
+DEVANAGARI = re.compile("[\u0900-\u097f]")
+# dark neutral palette; text/background pairs are WCAG AA or better (body text ~14:1, muted ~8:1, verdicts >= 7.5:1)
+CSS = """
+:root{--bg:#0f1115;--s1:#171a20;--s2:#1f232b;--line:#2c323c;--control:#6b7482;--text:#e7e9ee;--muted:#a9b0bd;
+--accent:#8ab4ff;--pass:#6fd99a;--pass-bg:#12271a;--fail:#ff9393;--fail-bg:#331a1a;--error:#ffb86b;--error-bg:#33250f;
+--inc:#c9b2ff;--inc-bg:#251f38;color-scheme:dark}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans Devanagari",sans-serif}
+.wrap{max-width:76rem;margin:0 auto;padding:0 1.5rem}
+h1{font-size:1.75rem;line-height:1.2;margin:0 0 .6rem}
+h2{font-size:1.3rem;line-height:1.3;margin:0 0 .75rem}
+h3{font-size:1rem;margin:1.5rem 0 .5rem}
+p{margin:0 0 .75rem;max-width:72ch}
+a{color:var(--accent);text-underline-offset:2px}
+code,pre,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{font-size:.95em;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;padding:.5rem .75rem;background:var(--s2);z-index:9}
+header.top{background:var(--s1);border-bottom:1px solid var(--line);padding:2rem 0 1.25rem}
+.lede{color:var(--text)}
+.facts,.stats,nav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.5rem}
+.facts li{border:1px solid var(--line);border-radius:6px;padding:.2rem .6rem;color:var(--muted);font-size:14px}
+nav ul{margin-top:1rem}
+nav a{display:inline-block;padding:.4rem .8rem;border:1px solid var(--control);border-radius:6px;color:var(--text);text-decoration:none}
+nav a:hover{border-color:var(--accent)}
+section{padding:2rem 0;border-bottom:1px solid var(--line)}
+.stats{margin-bottom:1rem}
+.stats li{background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:.5rem 1rem;color:var(--muted)}
+.stats b{display:block;font-size:1.4rem;color:var(--text);font-variant-numeric:tabular-nums}
+.caveats{background:var(--s1);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:.75rem 1rem;margin-bottom:1rem}
+.caveats ul{margin:0;padding-left:1.2rem}.caveats li{margin:.2rem 0}
+.note{color:var(--muted);font-size:14px}
+.err{color:var(--fail)}
+.sub{display:block;font-size:13px;color:var(--muted);font-weight:400}
+.scroll{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:8px;background:var(--s1);margin-bottom:.75rem}
+table{border-collapse:separate;border-spacing:0;width:100%}
+caption{text-align:left;padding:.6rem .75rem;color:var(--muted);font-size:13px}
+th,td{padding:.55rem .75rem;text-align:left;vertical-align:top;border-top:1px solid var(--line)}
+thead th{background:var(--s2);font-size:13px;font-weight:600;color:var(--muted)}
+tbody th{font-weight:400}
+tfoot th,tfoot td{font-weight:600}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.summary th,.summary td{white-space:nowrap}
+.matrix thead th{white-space:nowrap}
+.matrix td{min-width:9.5rem}
+.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{position:sticky;left:0;z-index:1;background:var(--s1);
+min-width:16rem;max-width:20rem;border-right:1px solid var(--line)}
+.matrix thead th:first-child{background:var(--s2);white-space:normal}
+.case code{display:block;font-weight:600;color:var(--text);overflow-wrap:normal}
+.utt{display:block;margin:.2rem 0}
+.v{display:inline-block;padding:0 .55rem;border:1px solid;border-radius:999px;font-size:13px;font-weight:600;line-height:1.6;text-decoration:none}
+a.v:hover{text-decoration:underline}
+.v-pass{color:var(--pass);background:var(--pass-bg)}.v-fail{color:var(--fail);background:var(--fail-bg)}
+.v-error{color:var(--error);background:var(--error-bg)}.v-inconclusive{color:var(--inc);background:var(--inc-bg)}
+.cls{display:block;margin-top:.3rem;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.st{display:inline-block;padding:0 .5rem;border:1px solid var(--control);border-radius:4px;background:var(--s2);color:var(--text);
+font:600 13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+.st-deployed{border-color:var(--accent)}.st-offline,.st-implemented,.st-blocked{border-style:dashed}
+.int th[scope=row]{min-width:12rem}.int td:nth-child(4){min-width:20rem;font-size:14px}
+.int .sub{margin-top:.35rem;overflow-wrap:anywhere}.int details{margin-top:.25rem}.int summary{font-size:13px}
+dl.legend,dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:.4rem 1rem;margin:0 0 1rem}
+dl.legend dd,dl.kv dd{margin:0;color:var(--muted)}
+dl.legend>*,dl.kv>*{min-width:0;overflow-wrap:anywhere}
+dl.kv dt{font-weight:600}
+dl.wide{grid-template-columns:minmax(10rem,max-content) 1fr;font-size:14px}
+details summary{cursor:pointer;color:var(--accent);padding:.25rem 0}
+details[open] summary{margin-bottom:.5rem}
+form label{display:block;font-weight:600;margin:.75rem 0 .3rem}
+select,input,textarea,button{font:inherit;color:var(--text);background:var(--s2);border:1px solid var(--control);border-radius:6px;
+padding:.5rem .65rem;max-width:100%}
+select,input{min-height:2.75rem;min-width:16rem}
+textarea{display:block;width:100%;font-size:13px;line-height:1.5;resize:vertical}
+button{min-height:2.75rem;padding:.55rem 1.2rem;background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:600;cursor:pointer}
+button:disabled{opacity:.55;cursor:not-allowed}
+.out{margin-top:.5rem}
+.result{background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:.75rem 1rem}
+.result ul{margin:0;padding-left:1.2rem}.result li{margin:.25rem 0}
+pre{background:var(--s2);border:1px solid var(--line);border-radius:6px;padding:.75rem;overflow:auto;max-height:28rem;font-size:13px}
+footer{padding:1.5rem 1.5rem 3rem;color:var(--muted);font-size:14px}
+@media (max-width:1024px){.wrap{padding:0 1.25rem}.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:14rem}}
+@media (max-width:768px){header.top{padding:1.5rem 0 1rem}h1{font-size:1.5rem}section{padding:1.5rem 0}
+.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:11rem;max-width:12rem}
+.int td:nth-child(4){min-width:18rem}dl.wide{grid-template-columns:1fr}}
+@media (max-width:480px){.wrap{padding:0 1rem}footer{padding:1.25rem 1rem 2rem}h1{font-size:1.35rem}h2{font-size:1.15rem}
+dl.legend,dl.kv{grid-template-columns:1fr;gap:.15rem}dl.legend dd,dl.kv dd{margin-bottom:.5rem}
+select,input,button{width:100%;min-width:0}
+.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:9.5rem;max-width:10rem}.matrix td{min-width:7.5rem}
+.int th[scope=row]{min-width:9rem}.int td:nth-child(4){min-width:13rem}}
+"""
+SCRIPT = """
+const $ = (id) => document.getElementById(id);
+function el(tag, props, ...kids) {
+  const node = Object.assign(document.createElement(tag), props || {});
+  node.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
+  return node;
+}
+const pill = (v) => el("span", {className: "v v-" + v, textContent: v});
+const err = (text) => el("p", {className: "err", textContent: text});
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const WAKE = "The server may be waking up from idle (free-plan instances can take about a minute); try again shortly.";
+
+async function call(url, opts) {
+  // {status, data}: status 0 means the request never got a response; data is null when the body is not JSON
+  let r;
+  try { r = await fetch(url, opts); } catch (e) { return {status: 0, data: null}; }
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* e.g. a proxy's HTML error page */ }
+  return {status: r.status, data};
+}
+function problem(res) {
+  if (res.status === 0) return "Could not reach the server. " + WAKE;
+  if (res.data && res.data.error) return `HTTP ${res.status}: ${res.data.error}`;
+  return `HTTP ${res.status}: unexpected response.` + (res.status >= 500 ? " " + WAKE : "");
+}
+const rawJSON = (value) => el("details", {}, el("summary", {textContent: "Raw JSON"}), el("pre", {textContent: JSON.stringify(value, null, 2)}));
+
+function renderArtifact(a, about, raw) {
+  const ev = a.evaluation, passed = ev.checks.filter((c) => c.verdict === "pass").length;
+  const checks = el("ul", {}, ...ev.checks.map((c) => el("li", {}, pill(c.verdict), " ", el("code", {textContent: c.metric}), c.detail ? " — " + c.detail : "")));
+  const classes = el("ul", {}, ...ev.classifications.map((c) => el("li", {}, el("code", {textContent: c.category}), ` (${c.confidence}, ${c.stage})`)));
+  return el("div", {className: "result"},
+    el("p", {}, el("b", {textContent: "Verdict: "}), pill(ev.verdict), ev.checks.length ? ` ${passed} of ${ev.checks.length} checks passed` : ""),
+    el("p", {}, "Case ", el("code", {textContent: a.case_id}), " · " + about),
+    a.run && a.run.execution_error ? err("Execution error: " + a.run.execution_error) : null,
+    el("h3", {textContent: "Checks"}),
+    ev.checks.length ? checks : el("p", {className: "note", textContent: "No checks were run: the run did not complete."}),
+    el("h3", {textContent: "Classifications"}),
+    ev.classifications.length ? classes : el("p", {className: "note", textContent: "None."}),
+    rawJSON(raw || a));
+}
+
+// --- script evaluation ---
+const EXAMPLES = JSON.parse($("examples").textContent);
+const form = $("f"), out = $("out");
+const formatScript = (s) => "[\\n" + s.map((t) => "  [\\n" + t.map((step) => "    " + JSON.stringify(step)).join(",\\n") + "\\n  ]").join(",\\n") + "\\n]";
+function loadScript() {
+  const ex = EXAMPLES[form.case_id.value];
+  const script = ex.script || Array.from({length: ex.turns}, (_, i) => [{text: `placeholder reply for user turn ${i + 1}`}]);
+  form.script.value = formatScript(script);
+  $("script-note").textContent = ex.script
+    ? "Loaded this case's example script; it is expected to pass."
+    : `No example script exists for this case yet. This placeholder has one reply step for each of the case's ${ex.turns} user turn(s), so it can be submitted, but it makes no tool calls: it is an editable starting point, not a correct answer.`;
+  out.replaceChildren(el("p", {className: "note", textContent: "The result appears here."}));
+}
+function checkScript(text, turns) {
+  let s;
+  try { s = JSON.parse(text); } catch (e) { return "The script is not valid JSON: " + e.message; }
+  const isStep = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+  if (!Array.isArray(s) || !s.every((t) => Array.isArray(t) && t.every(isStep)))
+    return "The script must be a list of turns, each a list of step objects.";
+  if (s.length !== turns) return `This case has ${turns} user turn(s) but the script has ${s.length}.`;
+  return s;
+}
+form.case_id.onchange = loadScript;
+form.onsubmit = async (ev) => {
+  ev.preventDefault();
+  const id = form.case_id.value, script = checkScript(form.script.value, EXAMPLES[id].turns);
+  if (typeof script === "string") { out.replaceChildren(err(script)); return; }
+  const btn = $("eval-btn");
+  btn.disabled = true;
+  out.replaceChildren(el("p", {className: "note", textContent: "Evaluating…"}));
+  try {
+    const res = await call("/api/evaluate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({case_id: id, script})});
+    if (res.status === 200 && res.data && res.data.evaluation) out.replaceChildren(renderArtifact(res.data, "scripted replay (fake-scripted adapter), not an AI agent"));
+    else out.replaceChildren(err(problem(res)), res.data && res.data.details ? rawJSON(res.data) : null);
+  } finally { btn.disabled = false; }
+};
+loadScript();
+
+// --- live demo ---
+let liveCfg = null, liveActive = false;
+async function loadLive(attempt = 0) {
+  const res = await call("/api/live-runs"), status = $("live-status");
+  if (res.status !== 200 || !res.data) {
+    if (attempt >= 5) { status.textContent = problem(res) + " Reload the page to try again."; return; }
+    const wait = 3 * 2 ** attempt;
+    status.textContent = `${problem(res)} Retrying in ${wait} s…`;
+    setTimeout(() => loadLive(attempt + 1), wait * 1000);
+    return;
+  }
+  const d = res.data;
+  if (!d.enabled) {
+    status.textContent = (d.reason ? d.reason[0].toUpperCase() + d.reason.slice(1) : "Live mode is disabled") + ". Nothing is sent to a model provider.";
+    return;
+  }
+  liveCfg = d;
+  const info = [["Model", d.model || "not reported"], ["Provider", d.provider || "not reported"],
+    ["Turn timeout", d.turn_timeout_s + " s"], ["Run timeout", d.run_timeout_s + " s"],
+    ["Daily cap", `${d.daily_cap} runs per UTC day, one at a time`]];
+  $("live-info").replaceChildren(...info.flatMap(([k, v]) => [el("dt", {textContent: k}), el("dd", {textContent: v})]));
+  $("live-info").hidden = false;
+  status.textContent = `Live mode is on: ${d.runs_today} of ${d.daily_cap} runs used today (UTC)` + (d.busy ? "; a run is in progress now." : ".");
+  $("lf").hidden = false;
+  $("lrun-btn").disabled = liveActive || d.busy || d.runs_today >= d.daily_cap;
+  $("lruns-wrap").hidden = d.runs.length === 0;
+  $("lruns-body").replaceChildren(...d.runs.map((r) => {
+    const agent = r.agent ? r.agent.name + " " + r.agent.version : "-";
+    const detail = r.artifact ? r.artifact.evaluation.classifications.map((c) => c.category).join(", ") : (r.error || "");
+    return el("tr", {}, ...[r.queued_at, r.case_id, r.status].map((v) => el("td", {textContent: v || "-"})),
+      el("td", {}, r.verdict ? pill(r.verdict) : "-"), el("td", {textContent: agent}), el("td", {textContent: detail}));
+  }));
+}
+$("lf").onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (liveActive) return;
+  const f = ev.target, out = $("lout"), btn = $("lrun-btn"), say = (...nodes) => out.replaceChildren(...nodes);
+  liveActive = true;
+  btn.disabled = true;
+  out.hidden = false;
+  say(el("p", {textContent: `Submitting ${f.case_id.value}…`}));
+  try {
+    const res = await call("/api/live-run", {method: "POST",
+      headers: {"Content-Type": "application/json", "Authorization": "Bearer " + f.token.value}, body: JSON.stringify({case_id: f.case_id.value})});
+    if (res.status !== 202 || !res.data) { say(err(problem(res))); return; }
+    const id = res.data.run_id, started = Date.now(), limit = ((liveCfg ? liveCfg.run_timeout_s : 600) + 60) * 1000;
+    let run = res.data, failures = 0;
+    say(el("p", {textContent: `Run ${id} queued; polling every 3 s…`}));
+    while (run.status === "queued" || run.status === "running") {
+      await sleep(failures ? Math.min(30, 3 * 2 ** failures) * 1000 : 3000);
+      const secs = Math.round((Date.now() - started) / 1000);
+      if (Date.now() - started > limit) { say(err(`Stopped polling after ${secs} s. The run may still finish: reload the page later to see it in the list.`)); return; }
+      const p = await call("/api/live-runs/" + encodeURIComponent(id));
+      if (p.status === 200 && p.data) { failures = 0; run = p.data; say(el("p", {textContent: `Run ${id}: ${run.status} after ${secs} s…`})); }
+      else if (p.status === 404) { say(err("The server no longer knows this run: it probably restarted, which clears live history.")); return; }
+      else { failures += 1; say(err(`Polling failed (${problem(p)}). Retrying, attempt ${failures}…`)); }
+    }
+    const agent = run.agent ? `agent ${run.agent.name} ${run.agent.version}` : "agent did not report itself";
+    say(run.artifact ? renderArtifact(run.artifact, `live run ${id}, ${agent}`, run) : err(`Run ${id} ended with status ${run.status}: ${run.error || "no detail"}`), run.artifact ? null : rawJSON(run));
+  } finally {
+    liveActive = false;
+    loadLive();
+  }
+};
+loadLive();
+"""
+
+
+def short_label(label: str) -> str:
+    return re.sub(r"-\d{4}-\d{2}-\d{2}$", "", label)
+
+
+def format_script(script: list[list[Any]]) -> str:
+    """One step per line; matches the page script's formatter so both render the same text."""
+    turns = (",\n".join("    " + json.dumps(s, ensure_ascii=False, separators=(",", ":")) for s in t) for t in script)
+    return "[\n" + ",\n".join(f"  [\n{t}\n  ]" for t in turns) + "\n]"
 
 
 def render_index(
     cases: dict[str, TestCase],
     runs: list[BundledRun],
     verdicts: dict[str, dict[str, tuple[str, list[str]]]],
-    example: str,
+    examples: dict[str, Any],
     integrations: IntegrationIndex,
 ) -> str:
     e = html.escape
     case_ids = sorted(set(cases) | {c for cells in verdicts.values() for c in cells})
-    head = "".join(f"<th>{e(r.label)}<br><small>{e(r.model)}<br>{e(r.note)}</small></th>" for r in runs)
-    totals = "".join(
-        f"<th>{sum(v == 'pass' for v, _ in verdicts[r.label].values())} of {len(verdicts[r.label])} pass</th>" for r in runs
+    unreviewed = sum(c.status == "proposed" and c.review.behavior == c.review.linguistic == "unreviewed" for c in cases.values())
+    review_fact = (
+        f"{unreviewed} proposed, not yet reviewed cases"
+        if unreviewed == len(cases)
+        else f"{unreviewed} of {len(cases)} cases proposed, not yet reviewed"
     )
-    integration_rows = "".join(
-        f'<tr><td>{e(i.name)}<br><small>{e(i.category)}</small></td><td class="{"pass" if i.status.startswith("live") else ""}">'
-        f"{e(i.status)}</td><td><small>{e(i.evidence)}</small></td><td><small>{e(i.note)}</small></td></tr>"
-        for i in integrations.integrations
+    judged = sum(len(cells) for cells in verdicts.values())
+    verdict_heads = "".join(f'<th scope="col" class="num">{k}</th>' for k in VERDICTS)
+
+    def provenance(r: BundledRun) -> str:
+        return f"{r.model}. Agent: {r.agent}. {r.note}"
+
+    summary_rows = "".join(
+        f'<tr><th scope="row" title="{e(provenance(r))}">{e(short_label(r.label))}</th>'
+        f'<td>{e(r.model.split(" (")[0])}</td><td>{e(r.date)}</td>'
+        + "".join(f'<td class="num">{sum(v == k for v, _ in verdicts[r.label].values())}</td>' for k in VERDICTS)
+        + f'<td class="num">{len(verdicts[r.label])}</td></tr>'
+        for r in runs
+    )
+    head = "".join(
+        f'<th scope="col" title="{e(provenance(r))}">{e(short_label(r.label))}<span class="sub">{e(r.date)}</span></th>' for r in runs
+    )
+    totals = "".join(
+        f'<td class="num">{sum(v == "pass" for v, _ in verdicts[r.label].values())} of {len(verdicts[r.label])}</td>' for r in runs
     )
     rows = []
     for cid in case_ids:
-        if cid in cases:
-            tags = e(", ".join(cases[cid].tags)) + f"<br>user: {e(cases[cid].turns[0])}"
+        if (case := cases.get(cid)) is not None:
+            lang = (' lang="awa"' if "awadhi" in case.tags else ' lang="hi"') if DEVANAGARI.search(case.turns[0]) else ""
+            more = f" (+{len(case.turns) - 1} more turn)" if len(case.turns) > 1 else ""
+            about = f'<span class="utt"{lang}>{e(case.turns[0])}</span><span class="sub">{e(", ".join(case.tags))}{more}</span>'
         else:
-            tags = "(not in current suite)"
+            about = '<span class="sub">(not in current suite)</span>'
         cells = []
         for r in runs:
             if cid not in verdicts[r.label]:
                 cells.append("<td>-</td>")
                 continue
             verdict, cats = verdicts[r.label][cid]
+            name = f"{verdict} — {short_label(r.label)} / {cid}"
             cells.append(
-                f'<td class="{e(verdict)}"><a href="/api/runs/{e(r.label)}/{e(cid)}">{e(verdict)}</a>'
-                f"<br><small>{e(', '.join(cats))}</small></td>"
+                f'<td><a class="v v-{e(verdict)}" href="/api/runs/{e(r.label)}/{e(cid)}" aria-label="{e(name)}">{e(verdict)}</a>'
+                f'<span class="cls">{e(", ".join(cats))}</span></td>'
             )
-        rows.append(f"<tr><td><code>{e(cid)}</code><br><small>{tags}</small></td>{''.join(cells)}</tr>")
-    options = "".join(f'<option{" selected" if c == "ambiguous-previous-order" else ""}>{e(c)}</option>' for c in cases)
-    script = json.dumps(json.loads(example)["script"], ensure_ascii=False, indent=1)
+        rows.append(f'<tr><th scope="row" class="case"><code>{e(cid)}</code>{about}</th>{"".join(cells)}</tr>')
+    run_legend = "".join(
+        f"<dt><code>{e(r.label)}</code></dt><dd>{e(r.model)}<br>Agent: {e(r.agent)}<br>{e(r.note)}</dd>" for r in runs
+    )
+    integration_rows = "".join(
+        f'<tr><th scope="row">{e(i.name)}<span class="sub">{e(i.category)}</span></th>'
+        f'<td><span class="st st-{e(i.status)}">{e(i.status)}</span></td><td>{"yes" if i.status == "deployed" else "no"}</td>'
+        f'<td>{e(lead)}{"." if rest else ""}<details><summary>Details and evidence</summary>{e(rest)}'
+        f'<span class="sub">Evidence: {e(i.evidence)}</span></details></td></tr>'
+        for i in integrations.integrations
+        for lead, _, rest in [i.note.partition(". ")]
+    )
+    legend = "".join(f'<dt><span class="st st-{k}">{k}</span></dt><dd>{e(v)}</dd>' for k, v in STATUSES.items())
+    verdict_legend = "".join(f'<dt><span class="v v-{k}">{k}</span></dt><dd>{e(v)}</dd>' for k, v in VERDICTS.items())
+    default = next(iter(examples))
+    options = "".join(f'<option{" selected" if c == default else ""}>{e(c)}</option>' for c in cases)
+    form_data = {cid: {"turns": len(c.turns), "script": examples.get(cid)} for cid, c in cases.items()}
+    form_json = json.dumps(form_data, ensure_ascii=False).replace("<", "\\u003c")  # cannot close the <script> block
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BoliBench demo</title>
-<style>
-body{{font:15px/1.45 system-ui,sans-serif;max-width:72rem;margin:2rem auto;padding:0 1rem;color:#1d1d1f}}
-table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:.4rem;vertical-align:top;text-align:left}}
-.pass{{background:#e6f4ea}}.fail{{background:#fdecea}}.error,.inconclusive{{background:#fff4e5}}
-textarea{{width:100%;font:13px ui-monospace,monospace}}pre{{background:#f5f5f7;padding:1rem;overflow:auto;max-height:40rem}}
-</style></head><body>
+<style>{CSS}</style></head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
 <h1>BoliBench</h1>
-<p>BoliBench is an open-source benchmark for conversational agents that act through tools. Each case is a short
+<p class="lede">An open-source benchmark for tool-using conversational agents. Each case is a short
 order-management conversation in Hindi-English code-switching or Awadhi ("cancel the old kurta order", "which
-order?"). The agent talks to a sandboxed shop: BoliBench records every tool call it makes and the final state of
-the orders, and the verdict comes from those observations (right order cancelled, nothing else touched, asked
-when it was ambiguous), not from what the agent claims in its reply. Failures are classified, e.g.
-<code>entity_resolution</code> for acting on the wrong order.</p>
-<p>On this page: the {len(case_ids)} cases with real bundled runs side by side, which integrations are
-verified and how far, a scripted evaluator anyone can try, and a token-gated live run.
-JSON: <a href="/api/cases">/api/cases</a> · <a href="/api/runs">/api/runs</a> ·
-<a href="/api/integrations">/api/integrations</a> · <a href="/health">/health</a></p>
-<h2>Cases and bundled runs</h2>
-<p>One row per case, one column per bundled run. Each run is a single unseeded run, so per-case differences
-may be sampling noise.</p>
-<table><tr><th>case</th>{head}</tr>{''.join(rows)}<tr><th>total</th>{totals}</tr></table>
-<p><small>Verdicts and failure classifications are from each run's artifact, judged when the run was made.
-Click a verdict for the full artifact (turns, tool calls, final state, checks).</small></p>
-<h2>Integrations</h2>
-<p>What each integration has actually been checked against, as of {e(integrations.as_of)}:
-<b>implemented</b> (code in the repo), <b>offline-tested</b> (tests against fakes, stubs or local test
-servers), <b>live-verified</b> (a real call to the service or a real run of the model, locally or on a hosted
-deployment), <b>not verified</b>. Anything that needs an account or key is not live-verified until it says so.</p>
-<table><tr><th>integration</th><th>status</th><th>evidence (in the repo)</th><th>note</th></tr>{integration_rows}</table>
-<h2>Evaluate a script</h2>
-<p>A script is one list of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>,
-<code>{{"text": ...}}</code> (reply) or <code>{{"reason": ...}}</code> (adapter failure). It replays against a fresh
-sandbox and the real evaluator. No network calls; a request can never name an agent URL.
-Limits: {MAX_BODY // 1024} KiB body, {MAX_STEPS} steps, {RATE_BURST:.0f} requests burst per client.</p>
-<form id="f"><p><label>case <select name="case_id">{options}</select></label></p>
-<textarea name="script" rows="16">{e(script)}</textarea>
-<p><button>Evaluate</button></p></form>
-<pre id="out">(result appears here)</pre>
-<h2>Live: a hosted open-weight model agent</h2>
-<p>On a configured deployment an example agent backed by an open-weight model runs in this container, and
-BoliBench drives one suite case through it over the webhook adapter, recording every tool call in its own
-sandbox. Runs need the demo owner's token and are capped per day; every run, pass or not, is listed below.
-A run is queued and runs in the background (a hosted model can take minutes); this page polls its status.</p>
-<p id="live-status">checking live mode...</p>
-<form id="lf" hidden><label>case <select name="case_id">{options}</select></label>
-<label>token <input name="token" type="password" autocomplete="off"></label> <button>Run live</button></form>
-<pre id="lout" hidden></pre>
-<table id="lruns" hidden><tr><th>queued (UTC)</th><th>case</th><th>status</th><th>verdict</th><th>agent (self-reported)</th><th>classifications / error</th></tr></table>
-<script>
-const $ = (id) => document.getElementById(id);
-$("f").onsubmit = async (ev) => {{
-  ev.preventDefault();
-  const f = ev.target, out = $("out");
-  let script;
-  try {{ script = JSON.parse(f.script.value); }} catch (err) {{ out.textContent = "script is not valid JSON: " + err.message; return; }}
-  const r = await fetch("/api/evaluate", {{method: "POST", headers: {{"Content-Type": "application/json"}},
-    body: JSON.stringify({{case_id: f.case_id.value, script}})}});
-  out.textContent = r.status + "\\n" + JSON.stringify(await r.json(), null, 2);
-}};
-async function loadLive() {{
-  const d = await (await fetch("/api/live-runs")).json();
-  if (!d.enabled) {{ $("live-status").textContent = d.reason; return; }}
-  $("live-status").textContent = `Enabled: ${{d.runs_today}} of ${{d.daily_cap}} live runs used today (UTC), one at a time` +
-    (d.busy ? " (one is running now)." : ".");
-  $("lf").hidden = false;
-  $("lruns").hidden = d.runs.length === 0;
-  $("lruns").querySelectorAll("tr.r").forEach((tr) => tr.remove());
-  for (const r of d.runs) {{
-    const tr = $("lruns").insertRow();
-    tr.className = "r " + (r.verdict || "");
-    const agent = r.agent ? r.agent.name + " " + r.agent.version : "-";
-    const detail = r.artifact ? r.artifact.evaluation.classifications.map((c) => c.category).join(", ") : (r.error || "");
-    for (const v of [r.queued_at, r.case_id, r.status, r.verdict || "-", agent, detail])
-      tr.insertCell().textContent = v;
-  }}
-}}
-$("lf").onsubmit = async (ev) => {{
-  ev.preventDefault();
-  const f = ev.target, out = $("lout");
-  out.hidden = false;
-  out.textContent = "submitting " + f.case_id.value + " ...";
-  const r = await fetch("/api/live-run", {{method: "POST", headers: {{"Content-Type": "application/json", "Authorization": "Bearer " + f.token.value}},
-    body: JSON.stringify({{case_id: f.case_id.value}})}});
-  let d = await r.json();
-  out.textContent = r.status + "\\n" + JSON.stringify(d, null, 2);
-  if (r.status !== 202) {{ loadLive(); return; }}
-  const started = Date.now();
-  while (d.status === "queued" || d.status === "running") {{
-    loadLive();
-    await new Promise((ok) => setTimeout(ok, 3000));
-    const p = await fetch("/api/live-runs/" + encodeURIComponent(d.run_id));
-    if (!p.ok) {{ out.textContent = p.status + "\\n" + JSON.stringify(await p.json(), null, 2); break; }}
-    d = await p.json();
-    out.textContent = `${{d.status}} after ${{Math.round((Date.now() - started) / 1000)}} s\\n` + JSON.stringify(d, null, 2);
-  }}
-  loadLive();
-}};
-loadLive();
-</script>
+order?") with a sandboxed shop. BoliBench records every tool call the agent makes and the final state of the
+orders; the verdict comes from those observations, not from what the agent claims in its reply.</p>
+<ul class="facts"><li>{e(review_fact)}</li><li>{len(runs)} bundled runs: single unseeded executions, not rankings</li></ul>
+<nav aria-label="Sections"><ul>
+<li><a href="#results">Results</a></li><li><a href="#cases">Cases</a></li><li><a href="#integrations">Integrations</a></li>
+<li><a href="#evaluate">Script evaluation</a></li><li><a href="#live">Live demo</a></li>
+</ul></nav>
+</div></header>
+<main id="main" class="wrap">
+<section id="results" aria-labelledby="results-h">
+<h2 id="results-h">Results</h2>
+<ul class="stats"><li><b>{len(cases)}</b> cases</li><li><b>{len(runs)}</b> bundled runs</li><li><b>{judged}</b> judged case runs</li></ul>
+<div class="caveats" role="note" aria-label="Caveats">
+<p><b>Read these counts with care.</b></p>
+<ul>
+<li>Each bundled run is one unseeded execution of one setup. Rerunning it can flip individual cases, so a
+difference of a case or two between runs may be sampling noise. The counts are not a score or a ranking.</li>
+<li>The cases are hand-written and proposed: not yet reviewed for expected behaviour or by native speakers.</li>
+<li>Verdicts were judged when each run was made. The agent's reply text is not judged.</li>
+</ul></div>
+<div class="scroll" role="region" aria-labelledby="summary-cap" tabindex="0">
+<table class="summary"><caption id="summary-cap">Verdict counts per bundled run, from the bundled artifacts</caption>
+<thead><tr><th scope="col">Run</th><th scope="col">Model</th><th scope="col">Date</th>{verdict_heads}<th scope="col" class="num">cases</th></tr></thead>
+<tbody>{summary_rows}</tbody></table></div>
+<h3>Verdicts</h3>
+<dl class="legend">{verdict_legend}</dl>
+</section>
+<section id="cases" aria-labelledby="cases-h">
+<h2 id="cases-h">Cases and bundled runs</h2>
+<p>One row per case, one column per bundled run. Column labels are run labels without the date: hover one, or
+open <i>Run provenance</i> below the table, for the model, agent and notes. Select a verdict to open that case's
+full artifact (JSON: turns, tool calls, final state, checks). Each run is a single unseeded run, so per-case
+differences may be sampling noise.</p>
+<div class="scroll" role="region" aria-labelledby="cases-cap" tabindex="0">
+<table class="matrix"><caption id="cases-cap">Verdict and failure classification per case and bundled run</caption>
+<thead><tr><th scope="col">Case<span class="sub">first user turn, tags</span></th>{head}</tr></thead>
+<tbody>{''.join(rows)}</tbody>
+<tfoot><tr><th scope="row">Passed</th>{totals}</tr></tfoot></table></div>
+<p class="note">Under each verdict are the failure categories the evaluator assigned, e.g. <code>entity_resolution</code>
+for acting on the wrong order. <code>unclassified</code> means a check failed but no classification rule matched it.</p>
+<details class="prov"><summary>Run provenance (model, agent, notes)</summary><dl class="legend wide">{run_legend}</dl></details>
+</section>
+<section id="integrations" aria-labelledby="integrations-h">
+<h2 id="integrations-h">Integrations</h2>
+<p>How far each integration has actually been exercised, as of {e(integrations.as_of)}. This is engineering
+status, not a benchmark result. Only <span class="st st-deployed">deployed</span> rows run in this deployed app.</p>
+<dl class="legend">{legend}</dl>
+<div class="scroll" role="region" aria-labelledby="int-cap" tabindex="0">
+<table class="int"><caption id="int-cap">Integration status: the highest level reached, with evidence in the repo</caption>
+<thead><tr><th scope="col">Integration</th><th scope="col">Status</th><th scope="col">Exercised by deployed app</th>
+<th scope="col">Notes and evidence</th></tr></thead>
+<tbody>{integration_rows}</tbody></table></div>
+</section>
+<section id="evaluate" aria-labelledby="evaluate-h">
+<h2 id="evaluate-h">Script evaluation</h2>
+<p>Replay a hand-written script against a fresh sandbox and the real evaluator. This is a scripted replay, not an
+AI agent: no model is called, nothing is stored, and a request can never name an agent URL. A script is one list
+of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>, <code>{{"text": ...}}</code> (reply) or
+<code>{{"reason": ...}}</code> (adapter failure). Limits: {MAX_BODY // 1024} KiB body, {MAX_STEPS} steps,
+{RATE_BURST:.0f} requests burst per client.</p>
+<form id="f" novalidate>
+<label for="case">Case</label><select id="case" name="case_id">{options}</select>
+<p id="script-note" class="note" aria-live="polite"></p>
+<label for="script">Script (JSON)</label>
+<textarea id="script" name="script" rows="14" spellcheck="false" autocapitalize="off" aria-describedby="script-note">{e(format_script(examples[default]))}</textarea>
+<p><button id="eval-btn" type="submit">Evaluate</button></p>
+</form>
+<div id="out" class="out" aria-live="polite"><p class="note">The result appears here.</p></div>
+<script type="application/json" id="examples">{form_json}</script>
+</section>
+<section id="live" aria-labelledby="live-h">
+<h2 id="live-h">Live demo</h2>
+<p>On a configured deployment, an example agent backed by a hosted model runs in the same container as this
+server. A live run drives one suite case through it over the webhook adapter and records every tool call in
+BoliBench's own sandbox. Runs need the demo owner's token (only the owner holds one), run one at a time and are
+capped per day. A run is queued and runs in the background; this page polls its status.</p>
+<p class="note">Data: when a run starts, the case's user turns are sent to the model provider listed below.
+History: runs are kept in this server's memory only, so a restart, redeploy or idle spin-down clears the list
+and resets the daily count.</p>
+<p id="live-status" aria-live="polite">Checking live mode…</p>
+<dl id="live-info" class="kv" hidden></dl>
+<form id="lf" hidden>
+<label for="lcase">Case</label><select id="lcase" name="case_id">{options}</select>
+<label for="ltoken">Demo token</label><input id="ltoken" name="token" type="password" autocomplete="off" required>
+<p><button id="lrun-btn" type="submit">Run live</button></p>
+</form>
+<div id="lout" class="out" aria-live="polite" hidden></div>
+<div id="lruns-wrap" class="scroll" role="region" aria-labelledby="lruns-cap" tabindex="0" hidden>
+<table><caption id="lruns-cap">Live runs since the last restart, newest first</caption>
+<thead><tr><th scope="col">Queued (UTC)</th><th scope="col">Case</th><th scope="col">Status</th><th scope="col">Verdict</th>
+<th scope="col">Agent (self-reported)</th><th scope="col">Classifications / error</th></tr></thead>
+<tbody id="lruns-body"></tbody></table></div>
+</section>
+</main>
+<footer class="wrap"><p>Data as of {e(integrations.as_of)}. JSON: <a href="/api/cases">/api/cases</a> ·
+<a href="/api/runs">/api/runs</a> · <a href="/api/integrations">/api/integrations</a> ·
+<a href="/api/live-runs">/api/live-runs</a> · <a href="/health">/health</a></p></footer>
+<script>{SCRIPT}</script>
 </body></html>
 """
 
@@ -593,7 +901,7 @@ def main() -> None:
         host = env.get("HOST") or ("0.0.0.0" if "PORT" in env else "127.0.0.1")
         port = int(env.get("PORT") or "8080")
         live = live_from_env(env)
-        demo = load_demo(Path(env.get("BOLIBENCH_SUITE") or "suites/orders"), Path(env.get("BOLIBENCH_DEMO") or "demo"))
+        demo = load_demo(Path(env.get("BOLIBENCH_SUITE") or "suites/orders"), Path(env.get("BOLIBENCH_DEMO") or "demo"), Path("examples/scripts"))
     except (OSError, ValueError) as e:
         raise SystemExit(f"bolibench demo: invalid configuration: {e}") from None
     server = DemoServer((host, port), demo, client_ip_header=env.get("BOLIBENCH_CLIENT_IP_HEADER") or None, live=live)
