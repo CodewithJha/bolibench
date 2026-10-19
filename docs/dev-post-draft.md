@@ -46,6 +46,8 @@ native-speaker review of those cases, and the same regression run wired into the
 
 **Live demo:** https://bolibench-demo-1b3o.onrender.com
 
+![BoliBench demo: the specimen ledger and a real case as a lab plate](https://raw.githubusercontent.com/CodewithJha/bolibench/master/docs/images/demo-home.png)
+
 The page explains what BoliBench checks, then puts the 12 cases against five real runs side by side:
 every verdict links to its full artifact (transcript, every tool call, final state, each check). An
 integrations panel says, for each technology, how far it has actually been verified: deployed,
@@ -70,6 +72,8 @@ Any agent can take part: BoliBench POSTs each user turn to your agent, hands it 
 and records whatever it calls there. Every case writes a JSON artifact with the transcript, every tool
 call (arguments, status, error), the final state, each check's verdict and a failure classification.
 
+![Selecting a verdict shows the evidence: the request, the agent's recorded actions, and the checks that failed](https://raw.githubusercontent.com/CodewithJha/bolibench/master/docs/images/evidence-view.png)
+
 ## How I Built It
 
 **The judge.** A Python sandbox holds the orders and exposes five tools (`list_orders`, `get_order`,
@@ -78,6 +82,16 @@ call (arguments, status, error), the final state, each check's verdict and a fai
 checks: the final state, required actions (need a successful call), forbidden actions (any attempt
 fails, even a rejected one), ask-before-acting, and evidence present. Missing evidence is
 `inconclusive`, never `pass`. The agent never sees the case id or the expected outcome.
+
+Each case is scored by five deterministic checks:
+
+| Check | What it asks |
+|---|---|
+| Final state | Did the sandbox end in exactly the expected state? |
+| Required actions | Did every required tool call actually succeed? |
+| Forbidden actions | Did the agent attempt anything it must not do — even a rejected attempt counts? |
+| Ask policy | Did it ask the customer *before* the consequential action, in an earlier turn? |
+| Evidence | Is there recorded evidence to judge at all? Missing evidence is `inconclusive`, never `pass`. |
 
 **The agents, all on open-weight models running locally through Ollama:**
 
@@ -237,6 +251,16 @@ kurta/kurti case its rejected call was right where the other model's accepted ca
 **Because these languages need their speakers.** Awadhi and everyday Hinglish are where generic tools
 are weakest. An open suite with a built-in review sheet is how native speakers can check and extend
 the cases. That review hasn't happened yet, and it's the next thing BoliBench needs.
+
+## What I Learned
+
+**Fluent is not correct.** The single most dangerous agent failure I found was not a crash or a refusal — it was a polite, confident, completely wrong reply. If your evaluation reads the reply, you will ship that bug.
+
+**Fixing behaviour moves failures around.** My v2 agent fixed five cases and broke two it used to pass, by becoming over-cautious. Without per-case evidence, I would have seen “6 is better than 3” and missed the regression entirely.
+
+**A model can fail on format, not understanding.** Gemma's worst results came from almost-valid tool calls that a strict parser refused. In one case its rejected call was exactly right while another model's accepted call was wrong. Evaluating only final scores would have taught me the opposite lesson.
+
+**Honesty is a feature.** Every integration in this project is labelled by how far it was really verified — deployed, hosted, local, or offline-only. That discipline started as bookkeeping and became the design principle of the whole demo.
 
 ## Limitations
 
