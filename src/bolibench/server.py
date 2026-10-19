@@ -407,8 +407,6 @@ function problem(res) {
   if (res.data && res.data.error) return `HTTP ${res.status}: ${res.data.error}`;
   return `HTTP ${res.status}: unexpected response.` + (res.status >= 500 ? " " + WAKE : "");
 }
-const rawJSON = (value) => el("details", {}, el("summary", {textContent: "Raw JSON"}), el("pre", {textContent: JSON.stringify(value, null, 2)}));
-
 function renderArtifact(a, about, raw) {
   const ev = a.evaluation, passed = ev.checks.filter((c) => c.verdict === "pass").length;
   const checks = el("ul", {}, ...ev.checks.map((c) => el("li", {}, pill(c.verdict), " ", el("code", {textContent: c.metric}), c.detail ? " — " + c.detail : "")));
@@ -421,8 +419,7 @@ function renderArtifact(a, about, raw) {
     el("h3", {textContent: "Checks"}),
     ev.checks.length ? checks : el("p", {className: "note", textContent: "No checks were run: the run did not complete."}),
     el("h3", {textContent: "Classifications"}),
-    ev.classifications.length ? classes : el("p", {className: "note", textContent: "None."}),
-    rawJSON(raw || a));
+    ev.classifications.length ? classes : el("p", {className: "note", textContent: "None."}));
 }
 
 function renderTimeline(a) {
@@ -438,6 +435,19 @@ function renderTimeline(a) {
   return el("div", {}, el("h3", {textContent: "Evidence timeline"}),
     el("ol", {className: "timeline"}, ...items.map(([k, v]) => el("li", {}, el("span", {className: "tl-k", textContent: k}), el("span", {className: "tl-v", textContent: v})))));
 }
+
+// --- case evidence viewer (bundled runs) ---
+const artifactView = $("artifact-view");
+document.querySelectorAll(".matrix a.v").forEach((link) => {
+  link.addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    artifactView.replaceChildren(el("p", {className: "note", textContent: "Loading evidence\u2026"}));
+    artifactView.scrollIntoView({block: "nearest"});
+    const res = await call(link.getAttribute("href"));
+    if (res.status !== 200 || !res.data) { artifactView.replaceChildren(err(problem(res))); return; }
+    artifactView.replaceChildren(renderArtifact(res.data, "bundled run \u00b7 recorded tool calls and final state", null));
+  });
+});
 
 // --- script evaluation ---
 const EXAMPLES = JSON.parse($("examples").textContent);
@@ -506,11 +516,6 @@ async function loadLive(attempt = 0) {
     return;
   }
   liveCfg = d;
-  const info = [["Model", d.model || "not reported"], ["Provider", d.provider || "not reported"],
-    ["Turn timeout", d.turn_timeout_s + " s"], ["Run timeout", d.run_timeout_s + " s"],
-    ["Daily cap", `${d.daily_cap} runs per UTC day, one at a time`]];
-  $("live-info").replaceChildren(...info.flatMap(([k, v]) => [el("dt", {textContent: k}), el("dd", {textContent: v})]));
-  $("live-info").hidden = false;
   status.textContent = `Live mode is on: ${d.runs_today} of ${d.daily_cap} runs used today (UTC)` + (d.busy ? "; a run is in progress now." : ".");
   $("lf").hidden = false;
   $("lrun-btn").disabled = liveActive || d.busy || d.runs_today >= d.daily_cap;
@@ -715,8 +720,9 @@ difference of a case or two between runs may be sampling noise. The counts are n
 <section id="cases" aria-labelledby="cases-h">
 <h2 id="cases-h"><span class="sec" aria-hidden="true">02</span>Cases and bundled runs</h2>
 <p>One row per case, one column per bundled run. Column labels are run labels without the date: hover one, or
-open <i>Run provenance</i> below the table, for the model, agent and notes. Select a verdict to open that case's
-full artifact (JSON: turns, tool calls, final state, checks). Each run is a single unseeded run, so per-case
+open <i>Run provenance</i> below the table, for the model, agent and notes. Select any verdict to see that
+case's evidence — what the customer asked, what the agent did, and why it passed or failed — right below
+the table. Each run is a single unseeded run, so per-case
 differences may be sampling noise.</p>
 <div class="filters"><label for="case-filter">Filter specimens</label>
 <input id="case-filter" type="search" autocomplete="off" placeholder="Search a case id, tag, or opening line&hellip;">
@@ -726,6 +732,7 @@ differences may be sampling noise.</p>
 <thead><tr><th scope="col">Case<span class="sub">first user turn, tags</span></th>{head}</tr></thead>
 <tbody>{''.join(rows)}</tbody>
 <tfoot><tr><th scope="row">Passed</th>{totals}</tr></tfoot></table></div>
+<div id="artifact-view" class="out" aria-live="polite"><p class="note">Select any verdict above to see its evidence here.</p></div>
 <p class="note">Under each verdict are the failure categories the evaluator assigned, e.g. <code>entity_resolution</code>
 for acting on the wrong order. <code>unclassified</code> means a check failed but no classification rule matched it.</p>
 <details class="prov"><summary>Run provenance (model, agent, notes)</summary><dl class="legend wide">{run_legend}</dl></details>
@@ -746,8 +753,7 @@ status, not a benchmark result. Only <span class="st st-deployed">deployed</span
 <p>Replay a hand-written script against a fresh sandbox and the real evaluator. This is a scripted replay, not an
 AI agent: no model is called, nothing is stored, and a request can never name an agent URL. A script is one list
 of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>, <code>{{"text": ...}}</code> (reply) or
-<code>{{"reason": ...}}</code> (adapter failure). Limits: {MAX_BODY // 1024} KiB body, {MAX_STEPS} steps,
-{RATE_BURST:.0f} requests burst per client.</p>
+<code>{{"reason": ...}}</code> (adapter failure).</p>
 <form id="f" novalidate>
 <label for="case">Case</label><select id="case" name="case_id">{options}</select>
 <p id="script-note" class="note" aria-live="polite"></p>
@@ -764,11 +770,9 @@ of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>, <code>{{"
 server. A live run drives one suite case through it over the webhook adapter and records every tool call in
 BoliBench's own sandbox. Runs need the demo owner's token (only the owner holds one), run one at a time and are
 capped per day. A run is queued and runs in the background; this page polls its status.</p>
-<p class="note">Data: when a run starts, the case's user turns are sent to the model provider listed below.
-History: runs are kept in this server's memory only, so a restart, redeploy or idle spin-down clears the list
-and resets the daily count.</p>
+<p class="note">When a run starts, the case's user turns are sent to the hosted model. Runs are kept in
+memory only, so a restart or idle spin-down clears the list and resets the daily count.</p>
 <p id="live-status" aria-live="polite">Checking live mode…</p>
-<dl id="live-info" class="kv" hidden></dl>
 <form id="lf" hidden>
 <label for="lcase">Case</label><select id="lcase" name="case_id">{options}</select>
 <label for="ltoken">Demo token</label><input id="ltoken" name="token" type="password" autocomplete="off" required>
@@ -782,11 +786,7 @@ and resets the daily count.</p>
 <tbody id="lruns-body"></tbody></table></div>
 </section>
 </main>
-<footer class="wrap"><div class="foot-mark" aria-hidden="true">BoliBench</div><p>Data as of {e(integrations.as_of)}.</p>
-<details class="prov"><summary>For developers: machine-readable data</summary>
-<p class="note">The same data as JSON, for scripts and checking: <a href="/api/cases">benchmark cases</a> ·
-<a href="/api/runs">bundled runs</a> · <a href="/api/integrations">integration status</a> ·
-<a href="/api/live-runs">live-run status</a> · <a href="/health">service health</a>. Routes are unchanged; they are documented here instead of in the main interface.</p></details></footer>
+<footer class="wrap"><div class="foot-mark" aria-hidden="true">BoliBench</div><p>Data as of {e(integrations.as_of)}. Verdicts come from recorded tool calls and the final state of the orders — never from what an agent says it did.</p></footer>
 <script>{SCRIPT}</script>
 </body></html>
 """
