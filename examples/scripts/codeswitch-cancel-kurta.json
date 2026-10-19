@@ -1,0 +1,16 @@
+[
+  [
+    {
+      "tool": "list_orders"
+    },
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-301"
+      }
+    },
+    {
+      "text": "ठीक है, Kurta वाला order (ORD-301) cancel कर दिया।"
+    }
+  ]
+]

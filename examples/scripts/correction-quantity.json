@@ -1,0 +1,17 @@
+[
+  [
+    {
+      "tool": "list_orders"
+    },
+    {
+      "tool": "update_quantity",
+      "args": {
+        "order_id": "ORD-501",
+        "quantity": 3
+      }
+    },
+    {
+      "text": "ठीक है, चूड़ियों वाले order (ORD-501) की quantity 3 कर दी।"
+    }
+  ]
+]

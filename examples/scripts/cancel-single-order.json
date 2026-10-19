@@ -1,0 +1,13 @@
+[
+  [
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-201"
+      }
+    },
+    {
+      "text": "Done — order ORD-201 has been cancelled."
+    }
+  ]
+]

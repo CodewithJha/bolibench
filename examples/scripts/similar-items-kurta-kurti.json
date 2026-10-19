@@ -1,0 +1,17 @@
+[
+  [
+    {
+      "tool": "list_orders"
+    },
+    {
+      "tool": "update_quantity",
+      "args": {
+        "order_id": "ORD-702",
+        "quantity": 2
+      }
+    },
+    {
+      "text": "कुर्ती वाले order (ORD-702) की quantity 2 कर दी।"
+    }
+  ]
+]

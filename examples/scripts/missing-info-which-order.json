@@ -1,0 +1,14 @@
+[
+  [
+    {
+      "tool": "ask_user",
+      "args": {
+        "kind": "clarify",
+        "question": "कौन सा order cancel करना है — ORD-801 (Saree) या ORD-802 (Chunni)?"
+      }
+    },
+    {
+      "text": "कृपया बताइए कौन सा order cancel करना है: ORD-801 या ORD-802?"
+    }
+  ]
+]

@@ -209,93 +209,124 @@ VERDICTS = {
     "inconclusive": "no check failed, but evidence one of them needs was missing",
 }
 DEVANAGARI = re.compile("[\u0900-\u097f]")
-# dark neutral palette; text/background pairs are WCAG AA or better (body text ~14:1, muted ~8:1, verdicts >= 7.5:1)
+# Acid Lab x Digital Archaeology: warm paper, ink, selective lime/violet; text pairs checked for WCAG AA contrast
 CSS = """
-:root{--bg:#0f1115;--s1:#171a20;--s2:#1f232b;--line:#2c323c;--control:#6b7482;--text:#e7e9ee;--muted:#a9b0bd;
---accent:#8ab4ff;--pass:#6fd99a;--pass-bg:#12271a;--fail:#ff9393;--fail-bg:#331a1a;--error:#ffb86b;--error-bg:#33250f;
---inc:#c9b2ff;--inc-bg:#251f38;color-scheme:dark}
+:root{--bg:#F4F0E8;--s1:#EAE6DD;--s2:#FFFEF9;--line:#D9D5CC;--ink:#171717;--control:#6E6A5E;--text:#171717;--muted:#5A564C;
+--accent:#6255E7;--lime:#D7FF3F;--pass:#236B45;--pass-bg:#DFEEE2;--fail:#A81C0D;--fail-bg:#FBE3DE;--error:#F04438;
+--inc:#6255E7;--inc-bg:#F0EEFF;color-scheme:light}
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--text);
 font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans Devanagari",sans-serif}
 .wrap{max-width:76rem;margin:0 auto;padding:0 1.5rem}
-h1{font-size:1.75rem;line-height:1.2;margin:0 0 .6rem}
-h2{font-size:1.3rem;line-height:1.3;margin:0 0 .75rem}
+h1{font-size:2.4rem;line-height:.95;margin:.2rem 0 .7rem;font-weight:900;letter-spacing:-.03em;text-transform:uppercase}
+h1 .mark{display:inline-block;background:var(--lime);border:2px solid var(--ink);padding:.05em .18em;margin-right:.25em;
+box-shadow:4px 4px 0 var(--ink);font-size:.72em;vertical-align:.08em}
+.kicker{font:700 .72rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;
+color:var(--ink);margin:0}
+.kicker::before{content:"";display:inline-block;width:.65em;height:.65em;background:var(--accent);margin-right:.55em}
+h2{font-size:1.35rem;line-height:1.25;margin:0 0 .75rem;font-weight:850;letter-spacing:-.01em;text-transform:uppercase}
+h2 .sec{display:inline-block;background:var(--ink);color:var(--lime);font:700 .78rem/1 ui-monospace,Menlo,Consolas,monospace;
+padding:.35em .45em;margin-right:.5em;vertical-align:.18em}
 h3{font-size:1rem;margin:1.5rem 0 .5rem}
 p{margin:0 0 .75rem;max-width:72ch}
-a{color:var(--accent);text-underline-offset:2px}
+a{color:var(--accent);text-underline-offset:2px;font-weight:600}
 code,pre,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 code{font-size:.95em;overflow-wrap:anywhere}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;padding:.5rem .75rem;background:var(--s2);z-index:9}
-header.top{background:var(--s1);border-bottom:1px solid var(--line);padding:2rem 0 1.25rem}
-.lede{color:var(--text)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;padding:.5rem .75rem;background:var(--lime);color:var(--ink);z-index:9}
+header.top{background:var(--bg);border-bottom:3px solid var(--ink);padding:2rem 0 1.4rem}
+.lede{color:var(--text);max-width:68ch}
 .facts,.stats,nav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.5rem}
-.facts li{border:1px solid var(--line);border-radius:6px;padding:.2rem .6rem;color:var(--muted);font-size:14px}
-nav ul{margin-top:1rem}
-nav a{display:inline-block;padding:.4rem .8rem;border:1px solid var(--control);border-radius:6px;color:var(--text);text-decoration:none}
-nav a:hover{border-color:var(--accent)}
-section{padding:2rem 0;border-bottom:1px solid var(--line)}
+.facts li{border:1.5px solid var(--ink);background:var(--s2);padding:.25rem .6rem;color:var(--ink);
+font:600 .78rem/1.5 ui-monospace,Menlo,Consolas,monospace}
+nav ul{margin-top:1.1rem}
+nav a{display:inline-block;padding:.42rem .8rem;border:1.5px solid var(--ink);color:var(--ink);text-decoration:none;
+font-weight:700;background:var(--s2)}
+nav a:hover{background:var(--lime)}
+section{padding:2rem 0;border-bottom:2px solid var(--ink)}
 .stats{margin-bottom:1rem}
-.stats li{background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:.5rem 1rem;color:var(--muted)}
-.stats b{display:block;font-size:1.4rem;color:var(--text);font-variant-numeric:tabular-nums}
-.caveats{background:var(--s1);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:.75rem 1rem;margin-bottom:1rem}
+.stats li{background:var(--s1);border:1.5px solid var(--ink);padding:.55rem 1rem;color:var(--muted);min-width:8.5rem}
+.stats li:first-child{box-shadow:5px 5px 0 var(--lime)}
+.stats b{display:block;font-size:1.55rem;color:var(--text);font-variant-numeric:tabular-nums;
+font-family:ui-monospace,Menlo,Consolas,monospace}
+.caveats{background:var(--s1);border:1.5px solid var(--ink);border-left:8px solid var(--accent);padding:.8rem 1rem;margin-bottom:1rem}
 .caveats ul{margin:0;padding-left:1.2rem}.caveats li{margin:.2rem 0}
 .note{color:var(--muted);font-size:14px}
-.err{color:var(--fail)}
+.err{color:var(--fail);font-weight:600}
 .sub{display:block;font-size:13px;color:var(--muted);font-weight:400}
-.scroll{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:8px;background:var(--s1);margin-bottom:.75rem}
+.sig{display:block;margin-top:.35rem;font:600 .72rem/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--ink);
+border-top:1px dashed var(--control);padding-top:.3rem;overflow-wrap:anywhere}
+.sig::before{content:"SIG ";background:var(--lime);padding:.05em .3em;margin-right:.4em}
+.scroll{overflow-x:auto;max-width:100%;border:1.5px solid var(--ink);background:var(--s2);margin-bottom:.75rem}
 table{border-collapse:separate;border-spacing:0;width:100%}
-caption{text-align:left;padding:.6rem .75rem;color:var(--muted);font-size:13px}
+caption{text-align:left;padding:.6rem .75rem;color:var(--muted);font-size:13px;
+font-family:ui-monospace,Menlo,Consolas,monospace}
 th,td{padding:.55rem .75rem;text-align:left;vertical-align:top;border-top:1px solid var(--line)}
-thead th{background:var(--s2);font-size:13px;font-weight:600;color:var(--muted)}
+thead th{background:var(--ink);font-size:13px;font-weight:700;color:var(--bg)}
 tbody th{font-weight:400}
-tfoot th,tfoot td{font-weight:600}
+tfoot th,tfoot td{font-weight:700;background:var(--s1)}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .summary th,.summary td{white-space:nowrap}
 .matrix thead th{white-space:nowrap}
 .matrix td{min-width:9.5rem}
 .matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{position:sticky;left:0;z-index:1;background:var(--s1);
-min-width:16rem;max-width:20rem;border-right:1px solid var(--line)}
-.matrix thead th:first-child{background:var(--s2);white-space:normal}
-.case code{display:block;font-weight:600;color:var(--text);overflow-wrap:normal}
+min-width:16rem;max-width:20rem;border-right:1.5px solid var(--ink)}
+.matrix thead th:first-child{background:var(--ink);white-space:normal}
+.case code{display:block;font-weight:700;color:var(--text);overflow-wrap:normal;font-size:.98rem}
 .utt{display:block;margin:.2rem 0}
-.v{display:inline-block;padding:0 .55rem;border:1px solid;border-radius:999px;font-size:13px;font-weight:600;line-height:1.6;text-decoration:none}
-a.v:hover{text-decoration:underline}
-.v-pass{color:var(--pass);background:var(--pass-bg)}.v-fail{color:var(--fail);background:var(--fail-bg)}
-.v-error{color:var(--error);background:var(--error-bg)}.v-inconclusive{color:var(--inc);background:var(--inc-bg)}
+.v{display:inline-block;padding:0 .55rem;border:1.5px solid var(--ink);font-size:13px;font-weight:700;line-height:1.6;text-decoration:none;color:var(--ink)}
+a.v:hover{text-decoration:underline;background:var(--lime)}
+.v-pass{color:var(--pass);background:var(--pass-bg);border-color:var(--pass)}
+.v-fail{color:var(--fail);background:var(--fail-bg);border-color:var(--error)}
+.v-error{color:var(--fail);background:var(--fail-bg);border-color:var(--error);border-style:dashed}
+.v-inconclusive{color:var(--inc);background:var(--inc-bg);border-color:var(--inc)}
 .cls{display:block;margin-top:.3rem;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
-.st{display:inline-block;padding:0 .5rem;border:1px solid var(--control);border-radius:4px;background:var(--s2);color:var(--text);
+.st{display:inline-block;padding:0 .5rem;border:1.5px solid var(--ink);background:var(--s2);color:var(--text);
 font:600 13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
-.st-deployed{border-color:var(--accent)}.st-offline,.st-implemented,.st-blocked{border-style:dashed}
+.st::before{margin-right:.4em;font-size:.85em}
+.st-deployed::before{content:"\25CF"}.st-hosted-api::before{content:"\25B2"}.st-local::before{content:"\25A0"}
+.st-partial::before{content:"\25D1"}.st-offline::before{content:"\25CB"}.st-implemented::before{content:"\25A1"}
+.st-blocked::before{content:"\2715"}
+.st-deployed{box-shadow:3px 3px 0 var(--lime)}.st-offline,.st-implemented,.st-blocked{border-style:dashed}
 .int th[scope=row]{min-width:12rem}.int td:nth-child(4){min-width:20rem;font-size:14px}
 .int .sub{margin-top:.35rem;overflow-wrap:anywhere}.int details{margin-top:.25rem}.int summary{font-size:13px}
 dl.legend,dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:.4rem 1rem;margin:0 0 1rem}
 dl.legend dd,dl.kv dd{margin:0;color:var(--muted)}
 dl.legend>*,dl.kv>*{min-width:0;overflow-wrap:anywhere}
-dl.kv dt{font-weight:600}
+dl.kv dt{font-weight:700}
 dl.wide{grid-template-columns:minmax(10rem,max-content) 1fr;font-size:14px}
-details summary{cursor:pointer;color:var(--accent);padding:.25rem 0}
+details summary{cursor:pointer;color:var(--accent);padding:.25rem 0;font-weight:600}
 details[open] summary{margin-bottom:.5rem}
-form label{display:block;font-weight:600;margin:.75rem 0 .3rem}
-select,input,textarea,button{font:inherit;color:var(--text);background:var(--s2);border:1px solid var(--control);border-radius:6px;
+form label{display:block;font-weight:700;margin:.75rem 0 .3rem}
+select,input,textarea,button{font:inherit;color:var(--text);background:var(--s2);border:1.5px solid var(--ink);
 padding:.5rem .65rem;max-width:100%}
 select,input{min-height:2.75rem;min-width:16rem}
-textarea{display:block;width:100%;font-size:13px;line-height:1.5;resize:vertical}
-button{min-height:2.75rem;padding:.55rem 1.2rem;background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:600;cursor:pointer}
-button:disabled{opacity:.55;cursor:not-allowed}
+textarea{display:block;width:100%;font-size:13px;line-height:1.5;resize:vertical;border-width:2px}
+button{min-height:2.75rem;padding:.55rem 1.2rem;background:var(--lime);border:2px solid var(--ink);color:var(--ink);
+font-weight:800;cursor:pointer;box-shadow:4px 4px 0 var(--ink)}
+button:hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 var(--ink)}
+button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+button.ghost{background:var(--s2);box-shadow:none;font-weight:700;margin-left:.5rem}
+#lrun-btn{background:var(--accent);color:#fff}
 .out{margin-top:.5rem}
-.result{background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:.75rem 1rem}
+.result{background:var(--s2);border:2px solid var(--ink);padding:.85rem 1rem;box-shadow:6px 6px 0 var(--s1)}
 .result ul{margin:0;padding-left:1.2rem}.result li{margin:.25rem 0}
-pre{background:var(--s2);border:1px solid var(--line);border-radius:6px;padding:.75rem;overflow:auto;max-height:28rem;font-size:13px}
+.timeline{list-style:none;margin:.5rem 0 1rem;padding:0;border-left:3px solid var(--ink)}
+.timeline li{padding:.35rem 0 .35rem .9rem;position:relative;overflow-wrap:anywhere}
+.timeline li::before{content:"";position:absolute;left:-.42rem;top:.75em;width:.6rem;height:.6rem;background:var(--lime);border:2px solid var(--ink)}
+.tl-k{display:block;font:700 .68rem/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.1em;color:var(--muted)}
+.tl-v{display:block}
+pre{background:var(--s1);border:1.5px solid var(--ink);padding:.75rem;overflow:auto;max-height:28rem;font-size:13px}
 footer{padding:1.5rem 1.5rem 3rem;color:var(--muted);font-size:14px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 @media (max-width:1024px){.wrap{padding:0 1.25rem}.matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:14rem}}
-@media (max-width:768px){header.top{padding:1.5rem 0 1rem}h1{font-size:1.5rem}section{padding:1.5rem 0}
+@media (max-width:768px){header.top{padding:1.5rem 0 1rem}h1{font-size:1.9rem}section{padding:1.5rem 0}
 .matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:11rem;max-width:12rem}
 .int td:nth-child(4){min-width:18rem}dl.wide{grid-template-columns:1fr}}
-@media (max-width:480px){.wrap{padding:0 1rem}footer{padding:1.25rem 1rem 2rem}h1{font-size:1.35rem}h2{font-size:1.15rem}
+@media (max-width:480px){.wrap{padding:0 1rem}footer{padding:1.25rem 1rem 2rem}h1{font-size:1.6rem}h2{font-size:1.15rem}
 dl.legend,dl.kv{grid-template-columns:1fr;gap:.15rem}dl.legend dd,dl.kv dd{margin-bottom:.5rem}
-select,input,button{width:100%;min-width:0}
+select,input,button{width:100%;min-width:0}button.ghost{margin-left:0;margin-top:.5rem}
 .matrix tbody th,.matrix thead th:first-child,.matrix tfoot th{min-width:9.5rem;max-width:10rem}.matrix td{min-width:7.5rem}
 .int th[scope=row]{min-width:9rem}.int td:nth-child(4){min-width:13rem}}
 """
@@ -334,11 +365,26 @@ function renderArtifact(a, about, raw) {
     el("p", {}, el("b", {textContent: "Verdict: "}), pill(ev.verdict), ev.checks.length ? ` ${passed} of ${ev.checks.length} checks passed` : ""),
     el("p", {}, "Case ", el("code", {textContent: a.case_id}), " · " + about),
     a.run && a.run.execution_error ? err("Execution error: " + a.run.execution_error) : null,
+    renderTimeline(a),
     el("h3", {textContent: "Checks"}),
     ev.checks.length ? checks : el("p", {className: "note", textContent: "No checks were run: the run did not complete."}),
     el("h3", {textContent: "Classifications"}),
     ev.classifications.length ? classes : el("p", {className: "note", textContent: "None."}),
     rawJSON(raw || a));
+}
+
+function renderTimeline(a) {
+  const run = a.run || {}, ev = a.evaluation, items = [];
+  (run.turns || []).forEach((t, i) => {
+    items.push(["Request \u00b7 turn " + (i + 1), t.user_input || ""]);
+    (run.tool_calls || []).filter((c) => c.turn === i).forEach((c) =>
+      items.push(["Agent action", c.tool + " " + JSON.stringify(c.args) + " \u2192 " + c.status + (c.error ? ": " + c.error : "")]));
+    if (t.agent_reply) items.push(["Agent reply", t.agent_reply]);
+  });
+  (ev.checks || []).forEach((c) => items.push(["Evaluation check", c.metric + " \u2014 " + c.verdict + (c.detail ? ": " + c.detail : "")]));
+  items.push(["Verdict", ev.verdict]);
+  return el("div", {}, el("h3", {textContent: "Evidence timeline"}),
+    el("ol", {className: "timeline"}, ...items.map(([k, v]) => el("li", {}, el("span", {className: "tl-k", textContent: k}), el("span", {className: "tl-v", textContent: v})))));
 }
 
 // --- script evaluation ---
@@ -364,6 +410,7 @@ function checkScript(text, turns) {
   return s;
 }
 form.case_id.onchange = loadScript;
+$("reset-btn").onclick = loadScript;
 form.onsubmit = async (ev) => {
   ev.preventDefault();
   const id = form.case_id.value, script = checkScript(form.script.value, EXAMPLES[id].turns);
@@ -496,7 +543,13 @@ def render_index(
         if (case := cases.get(cid)) is not None:
             lang = (' lang="awa"' if "awadhi" in case.tags else ' lang="hi"') if DEVANAGARI.search(case.turns[0]) else ""
             more = f" (+{len(case.turns) - 1} more turn)" if len(case.turns) > 1 else ""
-            about = f'<span class="utt"{lang}>{e(case.turns[0])}</span><span class="sub">{e(", ".join(case.tags))}{more}</span>'
+            exp = case.expected
+            sig = [f"ask {kind} before {tool}" for tool, kind in exp.ask_before.items()]
+            sig += [f"requires {a.tool}({', '.join(f'{k}={v}' for k, v in a.args.items())})" for a in exp.required_actions]
+            if not sig:
+                sig = ["no consequential action expected"]
+            signature = f'<span class="sig">{e(" · ".join(sig))}</span>'
+            about = f'<span class="utt"{lang}>{e(case.turns[0])}</span><span class="sub">{e(", ".join(case.tags))}{more}</span>{signature}'
         else:
             about = '<span class="sub">(not in current suite)</span>'
         cells = []
@@ -534,7 +587,8 @@ def render_index(
 <style>{CSS}</style></head><body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top"><div class="wrap">
-<h1>BoliBench</h1>
+<p class="kicker">BoliBench / Behavioural Evaluation &mdash; Specimen Ledger</p>
+<h1><span class="mark" aria-hidden="true">&#9638;</span>BoliBench</h1>
 <p class="lede">An open-source benchmark for tool-using conversational agents. Each case is a short
 order-management conversation in Hindi-English code-switching or Awadhi ("cancel the old kurta order", "which
 order?") with a sandboxed shop. BoliBench records every tool call the agent makes and the final state of the
@@ -547,7 +601,7 @@ orders; the verdict comes from those observations, not from what the agent claim
 </div></header>
 <main id="main" class="wrap">
 <section id="results" aria-labelledby="results-h">
-<h2 id="results-h">Results</h2>
+<h2 id="results-h"><span class="sec" aria-hidden="true">01</span>Results</h2>
 <ul class="stats"><li><b>{len(cases)}</b> cases</li><li><b>{len(runs)}</b> bundled runs</li><li><b>{judged}</b> judged case runs</li></ul>
 <div class="caveats" role="note" aria-label="Caveats">
 <p><b>Read these counts with care.</b></p>
@@ -565,7 +619,7 @@ difference of a case or two between runs may be sampling noise. The counts are n
 <dl class="legend">{verdict_legend}</dl>
 </section>
 <section id="cases" aria-labelledby="cases-h">
-<h2 id="cases-h">Cases and bundled runs</h2>
+<h2 id="cases-h"><span class="sec" aria-hidden="true">02</span>Cases and bundled runs</h2>
 <p>One row per case, one column per bundled run. Column labels are run labels without the date: hover one, or
 open <i>Run provenance</i> below the table, for the model, agent and notes. Select a verdict to open that case's
 full artifact (JSON: turns, tool calls, final state, checks). Each run is a single unseeded run, so per-case
@@ -580,7 +634,7 @@ for acting on the wrong order. <code>unclassified</code> means a check failed bu
 <details class="prov"><summary>Run provenance (model, agent, notes)</summary><dl class="legend wide">{run_legend}</dl></details>
 </section>
 <section id="integrations" aria-labelledby="integrations-h">
-<h2 id="integrations-h">Integrations</h2>
+<h2 id="integrations-h"><span class="sec" aria-hidden="true">03</span>Integrations</h2>
 <p>How far each integration has actually been exercised, as of {e(integrations.as_of)}. This is engineering
 status, not a benchmark result. Only <span class="st st-deployed">deployed</span> rows run in this deployed app.</p>
 <dl class="legend">{legend}</dl>
@@ -591,7 +645,7 @@ status, not a benchmark result. Only <span class="st st-deployed">deployed</span
 <tbody>{integration_rows}</tbody></table></div>
 </section>
 <section id="evaluate" aria-labelledby="evaluate-h">
-<h2 id="evaluate-h">Script evaluation</h2>
+<h2 id="evaluate-h"><span class="sec" aria-hidden="true">04</span>Script evaluation</h2>
 <p>Replay a hand-written script against a fresh sandbox and the real evaluator. This is a scripted replay, not an
 AI agent: no model is called, nothing is stored, and a request can never name an agent URL. A script is one list
 of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>, <code>{{"text": ...}}</code> (reply) or
@@ -602,13 +656,13 @@ of steps per user turn: <code>{{"tool": ..., "args": {{...}}}}</code>, <code>{{"
 <p id="script-note" class="note" aria-live="polite"></p>
 <label for="script">Script (JSON)</label>
 <textarea id="script" name="script" rows="14" spellcheck="false" autocapitalize="off" aria-describedby="script-note">{e(format_script(examples[default]))}</textarea>
-<p><button id="eval-btn" type="submit">Evaluate</button></p>
+<p><button id="eval-btn" type="submit">Evaluate</button><button id="reset-btn" type="button" class="ghost">Reset example</button></p>
 </form>
 <div id="out" class="out" aria-live="polite"><p class="note">The result appears here.</p></div>
 <script type="application/json" id="examples">{form_json}</script>
 </section>
 <section id="live" aria-labelledby="live-h">
-<h2 id="live-h">Live demo</h2>
+<h2 id="live-h"><span class="sec" aria-hidden="true">05</span>Live demo</h2>
 <p>On a configured deployment, an example agent backed by a hosted model runs in the same container as this
 server. A live run drives one suite case through it over the webhook adapter and records every tool call in
 BoliBench's own sandbox. Runs need the demo owner's token (only the owner holds one), run one at a time and are

@@ -1,0 +1,19 @@
+[
+  [
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-111"
+      }
+    },
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-111"
+      }
+    },
+    {
+      "text": "ORD-111 cancel हो गया।"
+    }
+  ]
+]

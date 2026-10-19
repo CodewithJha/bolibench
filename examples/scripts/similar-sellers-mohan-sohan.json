@@ -1,0 +1,16 @@
+[
+  [
+    {
+      "tool": "list_orders"
+    },
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-602"
+      }
+    },
+    {
+      "text": "Sohan Stores वाला order (ORD-602) cancel कर दिया, Mohan Stores वाला रहने दिया।"
+    }
+  ]
+]

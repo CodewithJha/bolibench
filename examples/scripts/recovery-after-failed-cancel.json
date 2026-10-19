@@ -1,0 +1,26 @@
+[
+  [
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-121"
+      }
+    },
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-121"
+      }
+    },
+    {
+      "tool": "update_quantity",
+      "args": {
+        "order_id": "ORD-122",
+        "quantity": 2
+      }
+    },
+    {
+      "text": "ORD-121 cancel हो गया और ORD-122 की quantity 2 कर दी।"
+    }
+  ]
+]

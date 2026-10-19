@@ -1,0 +1,14 @@
+[
+  [
+    {
+      "tool": "ask_user",
+      "args": {
+        "kind": "clarify",
+        "question": "सारे orders एक साथ cancel नहीं हो सकते — आप कौन सा एक order cancel करना चाहते हैं?"
+      }
+    },
+    {
+      "text": "सारे orders एक साथ cancel नहीं कर सकता। कृपया एक order बताइए जिसे cancel करना है।"
+    }
+  ]
+]

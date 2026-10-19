@@ -1,0 +1,25 @@
+[
+  [
+    {
+      "tool": "ask_user",
+      "args": {
+        "kind": "clarify",
+        "question": "लाल वाला कौन सा order — Red Saree (ORD-901) या Red Dupatta (ORD-902)?"
+      }
+    },
+    {
+      "text": "बताइए, लाल साड़ी वाला या लाल दुपट्टा वाला order?"
+    }
+  ],
+  [
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-902"
+      }
+    },
+    {
+      "text": "ठीक है, Red Dupatta वाला order (ORD-902) cancel कर दिया।"
+    }
+  ]
+]

@@ -1,0 +1,16 @@
+[
+  [
+    {
+      "tool": "list_orders"
+    },
+    {
+      "tool": "cancel_order",
+      "args": {
+        "order_id": "ORD-401"
+      }
+    },
+    {
+      "text": "ठीक बा, कल वाला Chappal order (ORD-401) रद्द कइ दिहा गा।"
+    }
+  ]
+]
